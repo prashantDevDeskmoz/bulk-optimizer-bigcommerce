@@ -7,7 +7,8 @@ const previewRouter = require("./previewRouter");
 const webhookRouter = require("./webhookRouter");
 const jobHistoryRouter = require("./jobHistoryRouter");
 const webhookHistoryRouter = require("./webhookHistoryRouter");
-
+const paymentRouter = require("./payment");
+const restoreRouter = require("./restoreRouter");
 const router = Router();
 
 router.use("/", systemRouter);
@@ -18,5 +19,7 @@ router.use("/channels", channelRouter);
 router.use("/preview", previewRouter);
 router.use("/job-histories", jobHistoryRouter);
 router.use("/webhook-histories", webhookHistoryRouter);
+router.use("/payment", paymentRouter);
+router.use("/restore", restoreRouter);
 
 module.exports = router;

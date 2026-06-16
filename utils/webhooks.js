@@ -1,4 +1,5 @@
 const { default: axios } = require("axios");
+const { webhooksUrl } = require("./bcApi");
 
 const WEBHOOK_SCOPES = ["store/product/created", "store/category/created"];
 
@@ -15,7 +16,7 @@ const subscribeWebhooksOnInstall = async (storeHash, accessToken) => {
 
   //getting existing webhooks
   const response = await axios.get(
-    `https://api.bigcommerce.com/stores/${storeHash}/v2/hooks`,
+    webhooksUrl(storeHash),
     {
       headers: {
         "X-Auth-Token": accessToken,
@@ -49,7 +50,7 @@ const createWebhook = async (storeHash, accessToken, scope, destination) => {
     console.log(`🔄 Creating webhook for scope: ${scope}`);
 
     const response = await axios.post(
-      `https://api.bigcommerce.com/stores/${storeHash}/v2/hooks`,
+      webhooksUrl(storeHash),
       {
         scope: scope,
         destination: destination,
@@ -75,7 +76,7 @@ const createWebhook = async (storeHash, accessToken, scope, destination) => {
 const getWebhooks = async (storeHash, accessToken) => {
   try {
     const response = await axios.get(
-      `https://api.bigcommerce.com/stores/${storeHash}/v2/hooks`,
+      webhooksUrl(storeHash),
       {
         headers: {
           "X-Auth-Token": accessToken,

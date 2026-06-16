@@ -2,12 +2,11 @@ const axios = require("axios");
 const Store = require("../models/Store");
 const Channel = require("../models/Channel");
 
-const listTreesUrl = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees`;
-const listTreeCategoriesUrl = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees/categories`;
-const listProductsUrl = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/products`;
+const {
+  listProductsUrl,
+  listTreeCategoriesUrl,
+  listTreesUrl,
+} = require("../utils/bcApi");
 
 async function fetchTreeIdsForChannel(storeHash, bcChannelId, headers) {
   const { data } = await axios.get(listTreesUrl(storeHash), {

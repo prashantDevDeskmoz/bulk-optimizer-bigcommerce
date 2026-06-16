@@ -11,6 +11,10 @@ const webhookHistorySchema = new mongoose.Schema({
         enum: ["products", "categories"],
         required: true,
     },
+    itemName : {
+        type: String,
+        default: null,
+    },
     target : {
         type: String,
         enum: ["title", "meta", "alt"],

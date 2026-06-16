@@ -3,11 +3,11 @@ const { requireAppSession } = require("../middleware/requireAppSession");
 const Store = require("../models/Store");
 const axios = require("axios");
 const Channel = require("../models/Channel");
+const OpenAI = require("openai");
 
-const BC_STORE_URL = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v2/store`;
-const BC_BRANDS_URL = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/brands`;
+const { listBrandsUrl, storeUrl } = require("../utils/bcApi");
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const router = Router();
 
@@ -31,8 +31,8 @@ router.get("/store", requireAppSession, async (req, res) => {
     };
 
     const [{ data }, brandResponse] = await Promise.all([
-      axios.get(BC_STORE_URL(req.storeHash), { headers }),
-      axios.get(BC_BRANDS_URL(req.storeHash), {headers, params: { page: 1, limit: 1 },}),
+      axios.get(storeUrl(req.storeHash), { headers }),
+      axios.get(listBrandsUrl(req.storeHash), {headers, params: { page: 1, limit: 1 },}),
     ]);
 
     const brands = Array.isArray(brandResponse?.data?.data)

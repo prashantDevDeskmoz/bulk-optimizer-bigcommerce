@@ -8,7 +8,7 @@ const jobHistorySchema = new mongoose.Schema(
     resource:       { type: String, enum: ["products", "categories", "brands"] },
     target:         { type: String, enum: ["title", "meta", "alt"] },
     template:       { type: String },
-    status:         { type: String, enum: ["pending", "fetching", "updating", "done", "failed"], default: "pending" },
+    status:         { type: String, enum: ["pending" , "completed", "failed"], default: "pending" },
     totalItems:     { type: Number, default: 0 },
     processedItems: { type: Number, default: 0 },
     blanksOnly:     { type: Boolean, default: false},
@@ -16,6 +16,7 @@ const jobHistorySchema = new mongoose.Schema(
     completedAt:    { type: Date, default: null },
     cruiseControl:  { type: Boolean, default: false },
     error:          { type: String, default: null },
+    restoreStatus:  { type: String, enum: ["pending", "completed", "failed"], default: null },
   },
   { timestamps: true }
 );

@@ -4,10 +4,14 @@ const Store = require("../models/Store");
 const Template = require("../models/Template");
 const WebhookHistory = require("../models/WebhookHistory");
 
-const batchTreeCategoriesUrl = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees/categories`;
-const batchUpdateUrl = (storeHash) => `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/products`;
-
+const {
+  batchUpdateCategoriesUrl,
+  batchUpdateProductsUrl,
+  getProductUrl,
+  listTreeCategoriesUrl,
+  listTreesUrl,
+  productChannelAssignmentsUrl,
+} = require("../utils/bcApi");
 
 function timingSafeEqual(a, b) {
   try {
@@ -62,7 +66,7 @@ async function updateCategoryCreated({
       },
     ];
 
-    await axios.put(batchTreeCategoriesUrl(storeHash), updates, {
+    await axios.put(batchUpdateCategoriesUrl(storeHash), updates, {
       headers: {
         "X-Auth-Token": accessToken,
         Accept: "application/json",
@@ -72,6 +76,7 @@ async function updateCategoryCreated({
 
     await WebhookHistory.findByIdAndUpdate(webhookHistory._id, {
       status: "done",
+      itemName: categoryData?.name ?? "",
       completedAt: new Date(),
     });
     return true;
@@ -81,6 +86,7 @@ async function updateCategoryCreated({
       await WebhookHistory.findByIdAndUpdate(webhookHistory._id, {
         status: "failed",
         error: e.message,
+        itemName: categoryData?.name ?? "",
         completedAt: new Date(),
       });
     }
@@ -110,7 +116,7 @@ function renderProductTemplate(template, product) {
 
 async function getChannelIdsForProduct(storeHash, productId, headers) {
   const { data } = await axios.get(
-    `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/products/channel-assignments`,
+    productChannelAssignmentsUrl(storeHash),
     {
       headers,
       params: { "product_id:in": productId },
@@ -155,7 +161,7 @@ async function updateProductCreated({
         ? { id: productId, page_title: rendered }
         : { id: productId, meta_description: rendered };
 
-    await axios.put(batchUpdateUrl(storeHash), [updatePayload], {
+    await axios.put(batchUpdateProductsUrl(storeHash), [updatePayload], {
       headers: {
         "X-Auth-Token": accessToken,
         Accept: "application/json",
@@ -165,6 +171,7 @@ async function updateProductCreated({
 
     await WebhookHistory.findByIdAndUpdate(webhookHistory._id, {
       status: "done",
+      itemName: productData?.name ?? "",
       completedAt: new Date(),
     });
     return true;
@@ -174,6 +181,7 @@ async function updateProductCreated({
       await WebhookHistory.findByIdAndUpdate(webhookHistory._id, {
         status: "failed",
         error: e.message,
+        itemName: productData?.name ?? "",
         completedAt: new Date(),
       });
     }
@@ -214,7 +222,7 @@ const handleProductCreatedWebhook = async (req, res) => {
     };
 
     const { data: productRes } = await axios.get(
-      `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/products/${productId}`,
+      getProductUrl(storeHash, productId),
       { headers },
     );
     const productData = productRes?.data;
@@ -287,7 +295,6 @@ const handleProductCreatedWebhook = async (req, res) => {
       await WebhookHistory.findByIdAndUpdate(parentWebhookHistory._id, {
         status: "done",
         completedAt: new Date(),
-        bcChannelId: item.bcChannelId,
       });
 
     return res.status(200).json({
@@ -330,22 +337,24 @@ const handleCategoryCreatedWebhook = async (req, res) => {
 
     console.log("fetching category data:::::::::::::::::::::::::::::::::", store.access_token);
     // now get channel from category id using bigcommerce api of trees
-    const category = await axios.get(`https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees/categories?category_id:in=${categoryId}`, {
+    const category = await axios.get(listTreeCategoriesUrl(storeHash), {
       headers: {
         "X-Auth-Token": store.access_token,
         "Accept": "application/json",
         "Content-Type": "application/json",
-      }
+      },
+      params: { "category_id:in": categoryId },
     });
     const categoryData = category.data.data[0];
 
     // now get channel from tree id using bigcommerce api of trees
-    const tree = await axios.get(`https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees?id:in=${categoryData.tree_id}`, {
+    const tree = await axios.get(listTreesUrl(storeHash), {
       headers: {
         "X-Auth-Token": store.access_token,
         "Accept": "application/json",
         "Content-Type": "application/json",
-      }
+      },
+      params: { "id:in": categoryData.tree_id },
     });
 
     console.log("tree:::::::::::::::::::::::::::::::::::::", tree.data.data);

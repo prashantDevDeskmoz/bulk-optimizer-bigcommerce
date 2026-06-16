@@ -1,18 +1,17 @@
-const dotenv = require("dotenv");
 const { Worker } = require("bullmq");
 const redis = require("../../redis");
 const axios = require("axios");
 const JobHistory = require("../../models/JobHistory");
-const { default: mongoose } = require("mongoose");
-const path = require("path");
-dotenv.config({ path: path.resolve(__dirname, "../../.env") })
-
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("Workers: MongoDB connected"))
-  .catch((err) => {
-    console.error("Workers: MongoDB connection failed", err);
-    process.exit(1);
-  });
+const ItemSnapshot = require("../../models/ItemSnapshot");
+const { updateSnapshotAndReturnUpdatablePayload, updateBulkCategories, updateBulkBrands, updateBulkProducts } = require("../workerService");
+const {
+  listProductsUrl,
+  listTreesUrl,
+  listTreeCategoriesUrl,
+  listBrandsUrl,
+  updateBrandUrl,
+  updateImageUrl,
+} = require("../../utils/bcApi");
 
   const headers = (accessToken) => {
     return {
@@ -30,14 +29,6 @@ mongoose.connect(process.env.MONGO_URI)
   const NORMAL_THROTTLE_MS     = 300;
   const PRODUCT_BATCH_LIMIT = 10;
 
-
-const listProductsUrl = (storeHash, include = "") => `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/products${include ? `?include=${include}` : ""}`;
-const batchUpdateUrl = (storeHash) => `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/products`;
-const listTreesUrl = (storeHash) => `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees`;
-const listTreeCategoriesUrl = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees/categories`;
-const batchTreeCategoriesUrl = (storeHash) =>
-  `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/trees/categories`;
 
 async function fetchTreeIdsForChannel(storeHash, bcChannelId, headers) {
   const { data } = await axios.get(listTreesUrl(storeHash), {
@@ -87,35 +78,13 @@ const bulkOptimizerWorker = new Worker(
   "bulk-optimized-products",
   async (job) => {
     try {
-      const { storeHash, target, template, accessToken, blanksOnly, bcChannelId } = job.data;
+      const { storeHash, target, template, accessToken, blanksOnly, bcChannelId, canBeUpdated } = job.data;
 
       console.log("[Product Worker] :started:", job.data);
 
-      const renderTemplate = (input, product) => {
-        const dict = {
-          "[[product name]]": product?.name ?? "",
-          "[[sku]]": product?.sku ?? "",
-          "[[price]]":
-            product?.price != null ? String(product.price) : "",
-          "[[currency]]": product?.currency ?? "",
-          "[[type]]": product?.type ?? "",
-          "[[category name]]": "",
-          "[[brand]]": product?.brand_name ?? "",
-          "[[mpn]]": product?.mpn ?? "",
-          "[[condition]]": product?.condition ?? "",
-          "[[store name]]": "",
-        };
-
-        let out = String(input ?? "");
-        for (const [token, value] of Object.entries(dict)) {
-          out = out.replaceAll(token, value);
-        }
-        return out;
-      };
-
       // Step 1: Fetch products
       let products = [];
-      let page = 1;
+      let page = 1; 
       while (true) {
         console.log("[Product Worker] :Fetching products page:", page);
         const { data } = await axios.get((target === "alt" ? listProductsUrl(storeHash, "images") : listProductsUrl(storeHash)) , {
@@ -133,11 +102,11 @@ const bulkOptimizerWorker = new Worker(
         page += 1;
       }
 
-      const total = products.length;
-      console.log("[Product Worker] :Total products fetched:", total);
-      await job.updateProgress({ stage: "updating", done: 0, total });
+      console.log("[Product Worker] :Total products fetched:", products.length);
+            
 
       // Step 2: Filter out products that already have a title or meta description
+      products = products.filter((p) => p?.id);
       if(blanksOnly){ 
         if(target === "title" || target === "meta"){
           products = products.filter((p) => {
@@ -147,20 +116,42 @@ const bulkOptimizerWorker = new Worker(
           });
         }
       }
+      
+      if(target === "alt"){
+        products = products.filter(p => !/\[sample\]/i.test(p.name ?? ""));
+        products = products.filter(p => p.images?.length > 0);
+        if(blanksOnly){
+          products = products.filter(p => {
+            for(const image of p.images){
+              if(image.description !== "")return false;
+            }
+            return true;
+          });
+        }
+      }
+
+      const total = products.length;
+
+      // Step 3: Only update max of canBeUpdated products, if canBeUpdated is less than products.length, then update all of them
+      if(canBeUpdated !== undefined && canBeUpdated !== null){
+        products = products.slice(0, canBeUpdated);
+      }
+      await job.updateProgress({ status: "updating", processedItems: 0, totalItems: total });   
+
+      const updatablePayload = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "product", items: products, target, jobId: job.id, bcChannelId, template});
+      console.log("updatablePayload:::::::::::::::::::::::::::::::::::::", updatablePayload);
 
       // Note: image alt text is on product images, not the product object.
       if (target === "alt") {
-        const imageUpdates = [];
-        for (const product of products) {
-          if (!product.images || product.images.length === 0) continue;
-          const altText = renderTemplate(template, product);
-          for (const image of product.images) {
+        let imageUpdates = [];
+        for (const product of updatablePayload) {
+          const images = Array.isArray(product?.images) ? product.images : [];
+          for (const image of images) {
             if (!image.id) continue;
-            if(blanksOnly && image.description !== "") continue;
             imageUpdates.push({
               productId: product.id,
               imageId: image.id,
-              altText,
+              alt_text: image.alt_text,
             });
           }
         }
@@ -177,124 +168,69 @@ const bulkOptimizerWorker = new Worker(
           );
 
           const responses = await Promise.all(
-            chunk.map(({ productId, imageId, altText }) =>
-              fetch(
-                `https://api.bigcommerce.com/stores/${storeHash}/v2/products/${productId}/images/${imageId}`,
-                {
-                  method: "PUT",
-                  headers: headers(accessToken),
-                  body: JSON.stringify({ description: altText }),
-                },
-              ),
+            chunk.map(({ productId, imageId, alt_text }) =>
+              axios.put(updateImageUrl(storeHash, productId, imageId), { description: alt_text }, { headers: headers(accessToken) }),
             ),
           );
 
+          let remaining = 0;
           for (const response of responses) {
-            if (!response.ok) {
-              const errBody = await response.text().catch(() => "");
-              throw new Error(
-                `Alt update failed (${response.status}): ${errBody}`,
-              );
+
+            if (response.status !== 200) {
+              console.log("alt update failed:::::::::::::::::::::::::::::::::::::", response.data);
+            }else{
+              done += 1;
+              remaining = response.headers["x-rate-limit-requests-left"];
             }
           }
 
-          done += chunk.length;
           await job.updateProgress({
-            stage: "updating",
-            done,
-            total: totalImages,
+            status: "updating",
+            processedItems: done,
+            totalItems: totalImages,
           });
 
-          let minRemaining = null;
-          for (const response of responses) {
-            const remaining = response.headers.get(
-              "X-Rate-Limit-Requests-Left",
-            );
-            if (remaining != null) {
-              const n = parseInt(remaining, 10);
-              if (minRemaining == null || n < minRemaining) {
-                minRemaining = n;
-              }
-            }
+          if(remaining < 50){
+            await new Promise((r) => setTimeout(r, 3*NORMAL_THROTTLE_MS));
+          }else{
+            await new Promise((r) => setTimeout(r, NORMAL_THROTTLE_MS));
           }
-          console.log(
-            "rate limit remaining (batch min):",
-            minRemaining ?? "unknown",
-          );
-          if (minRemaining != null && minRemaining < 50) {
-            await new Promise((r) => setTimeout(r, 3000));
-          } else {
-            await new Promise((r) => setTimeout(r, 200));
-          }
+
         }
 
         await job.updateProgress({
-          stage: "done",
-          done: totalImages,
-          total: totalImages,
+          status: "completed",
+          processedItems: done,
+          totalItems: totalImages,
         });
         await JobHistory.updateOne(
           { jobId: job.id },
           {
-            status: "done",
+            status: "completed",
             completedAt: new Date(),
             totalItems: totalImages,
-            processedItems: totalImages,
+            processedItems: done,
           },
         );
-        console.log("[Product Worker] :done: products alt. job id: ", job.id);
+        console.log("[Product Worker] :done: products alt. job id: ", job.id, totalImages);
         return;
       }
 
-      // Step 3: Build batch update payloads (BigCommerce limit: 10 products per request)
-      const updates = [];
-      for (const product of products) {
-        const productId = product?.id;
-        if (!productId) continue;
-        const rendered = renderTemplate(template, product);
-        updates.push(
-          target === "title"
-            ? { id: productId, page_title: rendered }
-            : { id: productId, meta_description: rendered },
-        );
-      }
+      // Step 4: Build batch update payloads (BigCommerce limit: 10 products per request)
 
       let done = 0;
-      for (let i = 0; i < updates.length; i += PRODUCT_BATCH_LIMIT) {
-        console.log("[Product Worker] :Updating products:", i, "of", updates.length, "job id:", job.id);
-        const chunk = updates.slice(i, i + PRODUCT_BATCH_LIMIT);
-        if (chunk.length === 0) continue;
+      const { done: updatedDone } = await updateBulkProducts({ storeHash, updatablePayload, done, NORMAL_THROTTLE_MS, PRODUCT_BATCH_LIMIT, accessToken, job});
 
-        const response = await axios.put(batchUpdateUrl(storeHash), chunk, { headers: headers(accessToken) });
-        done += chunk.length;
-
-        await job.updateProgress({ stage: "updating", done, total });
-
-        // Light throttling to avoid rate limiting
-        const remaining = response.headers["x-rate-limit-requests-left"];
-        console.log("[Product Worker] :Rate limit remaining:", remaining);
-        if (remaining && parseInt(remaining) < 50) {
-          await new Promise(r => setTimeout(r, 10*NORMAL_THROTTLE_MS));
-        }else{
-          await new Promise(r => setTimeout(r, 3*NORMAL_THROTTLE_MS));
-        }
-      }
-
-      await job.updateProgress({ stage: "done", done: total, total });
+      await job.updateProgress({ status: "completed", processedItems: updatedDone, totalItems: total });
       await JobHistory.updateOne(
         { jobId: job.id },
-        {
-          status: "done",
-          completedAt: new Date(),
-          totalItems: total,
-          processedItems: done,
-        },
+        { status: "completed", completedAt: new Date(), totalItems: total, processedItems: updatedDone },
       );
       console.log("[Product Worker] :done: products. job id: ", job.id);
     } catch (error) {
       console.error(error);
       await JobHistory.updateOne({ jobId: job.id }, { status: "failed", error: error.message });
-      await job.updateProgress({ stage: "failed", done: 0, total: 0 });
+      await job.updateProgress({ status: "failed", processedItems: 0, totalItems: 0 });
       throw error;
     }
   },
@@ -308,7 +244,7 @@ const bulkOptimizedCategoriesWorker = new Worker(
   "bulk-optimized-categories",
   async (job) => {
     try {
-      const { storeHash, target, template, accessToken, bcChannelId, blanksOnly } = job.data;
+      const { storeHash, target, template, accessToken, bcChannelId, blanksOnly, canBeUpdated } = job.data;
 
       if (bcChannelId == null || bcChannelId === "") {
         throw new Error("bcChannelId is required for category bulk updates");
@@ -316,41 +252,27 @@ const bulkOptimizedCategoriesWorker = new Worker(
 
       console.log("bulkOptimizedCategoriesWorker started:", job.data);
 
-      const batchUrl = batchTreeCategoriesUrl(storeHash);
-
-      // ── Template renderer ──────────────────────────────────────
-      const renderTemplate = (template, category) => {
-        const tokens = {
-          "[[category name]]": category?.name ?? "",
-        };
-
-        let out = template || "";
-        for (const [token, value] of Object.entries(tokens)) {
-          out = out.replaceAll(token, value);
-        }
-        return out;
-      };
-
-      // ── Step 1: Resolve category tree(s) for the channel ───────
+      // ── Step 1: get tree ids for channel ───────
       const treeIds = await fetchTreeIdsForChannel(
         storeHash,
         bcChannelId,
         headers(accessToken),
       );
 
+      // if no tree ids found, return
       if (treeIds.length === 0) {
         console.log("[Category Worker] :No category trees found for channel");
         await job.updateProgress({
-          stage: "done",
+          status: "completed",
           resource: "categories",
-          done: 0,
-          total: 0,
+          processedItems: 0,
+          totalItems: 0,
           note: "No category trees found for channel",
         });
         await JobHistory.updateOne(
           { jobId: job.id },
           {
-            status: "done",
+            status: "completed",
             completedAt: new Date(),
             totalItems: 0,
             processedItems: 0,
@@ -359,7 +281,7 @@ const bulkOptimizedCategoriesWorker = new Worker(
         return;
       }
 
-      // ── Step 2: Fetch categories for those tree(s) ─────────────
+      // ── Step 2: Fetch categories for those tree ids ─────────────
       let categories = await fetchCategoriesForTrees(
         storeHash,
         treeIds,
@@ -368,6 +290,7 @@ const bulkOptimizedCategoriesWorker = new Worker(
       );
       
       // Step 3: Filter out categories that already have a title or meta description
+      categories = categories.filter((c) => c?.category_id);
       if(blanksOnly){
         categories = categories.filter((c) => {
           if(target === "title" && c?.page_title !== "")return false;
@@ -379,45 +302,30 @@ const bulkOptimizedCategoriesWorker = new Worker(
       const total = categories.length;
       console.log(`[Category Worker] :Total categories fetched for channel ${bcChannelId}: ${total}`);
 
-      await job.updateProgress({ stage: "fetched", resource: "categories", total });
-
-      // ── Step 4: Build update payloads ──────────────────────────
-      const updates = categories
-        .filter((c) => c?.category_id)
-        .map((category) => ({
-          category_id: category.category_id,
-          ...(target === "title"
-            ? { page_title: renderTemplate(template, category) }
-            : { meta_description: renderTemplate(template, category) }),
-        }));
-
-      console.log("updates:::::::::::::::::::::::::::::::::::::", updates);
-
-      // ── Step 5: Batch PUT in chunks of 50 ─────────────────────
-      let done = 0;
-
-      for (let i = 0; i < updates.length; i += CATEGORY_BATCH) {
-        const chunk = updates.slice(i, i + CATEGORY_BATCH);
-
-        console.log(`Updating categories ${i + 1}–${i + chunk.length} of ${total}`);
-
-        await axios.put(batchUrl, chunk, { headers: headers(accessToken) });
-
-        done += chunk.length;
-        await job.updateProgress({ stage: "updating", resource: "categories", done, total });
-
-        // Light throttling to avoid rate limiting
-        await new Promise((resolve) => setTimeout(resolve, NORMAL_THROTTLE_MS));
+      await job.updateProgress({ status: "fetched", resource: "categories", totalItems: total });
+      
+      // Step 5: Only update max of canBeUpdated categories, if canBeUpdated is greater than categories.length, then update all of them
+      if(canBeUpdated !== undefined && canBeUpdated !== null){
+        categories = categories.slice(0, canBeUpdated);
       }
+      
+      // Step 6: get payload to update and update snapshots for restore functionality
+      const updatablePayload = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "category", items: categories, target, jobId: job.id, template, bcChannelId});
 
-      await job.updateProgress({ stage: "done", resource: "categories", done: total, total });
+      // ── Step 7: Batch PUT in chunks of 50 ─────────────────────
+      let done = 0;  
+      console.log("updatablePayload:::::::::::::::::::::::::::::::::::::", updatablePayload);
+
+      const { done: updatedDone } = await updateBulkCategories({ storeHash, updatablePayload, done, NORMAL_THROTTLE_MS, CATEGORY_BATCH, accessToken, job});
+
+      await job.updateProgress({ status: "completed", resource: "categories", processedItems: updatedDone, totalItems: total });
       await JobHistory.updateOne(
         { jobId: job.id },
         {
-          status: "done",
+          status: "completed",
           completedAt: new Date(),
           totalItems: total,
-          processedItems: done,
+          processedItems: updatedDone,
         },
       );
       console.log("[Category Worker] :Categories bulk update complete.");
@@ -429,7 +337,7 @@ const bulkOptimizedCategoriesWorker = new Worker(
     }
   },
   { 
-    connection: redis ,
+     connection: redis ,
      concurrency: 2,
   },
 );
@@ -438,25 +346,9 @@ const bulkOptimizedBrandsWorker = new Worker(
   "bulk-optimized-brands",
   async (job) => {
     try {
-      const { storeHash, target, template, accessToken, blanksOnly } = job.data;
+      const { storeHash, target, template, accessToken, blanksOnly, canBeUpdated } = job.data;
 
-      const renderTemplate = (template, brand) => {
-        const tokens = {
-          "[[name]]": brand?.name ?? "",
-        };
-        let out = template || "";
-        for (const [token, value] of Object.entries(tokens)) {
-          out = out.replaceAll(token, value);
-        }
-        return out;
-      };
-
-      const listBrandsUrl = (storeHash) =>
-        `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/brands`;
-      const updateBrandUrl = (storeHash, brandId) =>
-        `https://api.bigcommerce.com/stores/${storeHash}/v3/catalog/brands/${brandId}`;
-
-      const brands = [];
+      let brands = [];
       let page = 1;
       while (true) {
         console.log("[Brand Worker] :Fetching brands page:", page);
@@ -474,97 +366,54 @@ const bulkOptimizedBrandsWorker = new Worker(
         page += 1;
       }
 
-      await job.updateProgress({ stage: "fetched", resource: "brands", total: brands.length });
+      await job.updateProgress({ status: "fetched", resource: "brands", totalItems: brands.length });
 
-      let payload = brands
-        .filter((b) => b?.id && b?.name)
-        .map((brand) => ({
-          id: brand.id,
-          name: brand.name,
-          ...(target === "title" ? { page_title: renderTemplate(template, brand) } : { meta_description: renderTemplate(template, brand) }),
-        }));
-
+      brands = brands.filter((b) => b?.id && b?.name);
       if (blanksOnly) {
-        payload = payload.filter((p) => {
+        brands = brands.filter((p) => {
           if (target === "title" && p?.page_title !== "") return false;
           else if (target === "meta" && p?.meta_description !== "") return false;
           return true;
         });
       }
 
-      const totalToUpdate = payload.length;
+      const total = brands.length;
 
-      if (totalToUpdate === 0) {
-        await job.updateProgress({ stage: "done", resource: "brands", done: 0, total: 0 });
+      if (total === 0) {
+        await job.updateProgress({ status: "completed", resource: "brands", processedItems: 0, totalItems: 0 });
         await JobHistory.updateOne(
           { jobId: job.id },
-          { status: "done", completedAt: new Date(), totalItems: 0, processedItems: 0 },
+          { status: "completed", completedAt: new Date(), totalItems: 0, processedItems: 0 },
         );
         console.log("[Brand Worker] :No brands to update.");
         return;
       }
 
-      const putBrand = (item) => {
-        const { id, name, page_title, meta_description } = item;
-        const body = { name };
-        if (page_title !== undefined) body.page_title = page_title;
-        if (meta_description !== undefined) body.meta_description = meta_description;
-        return axios.put(updateBrandUrl(storeHash, id), body, {
-          headers: headers(accessToken),
-        });
-      };
+      // Only update max of canBeUpdated brands, if canBeUpdated is less than payload.length, then update all of them
+      if(canBeUpdated !== undefined && canBeUpdated !== null){
+        brands = brands.slice(0, canBeUpdated);
+      }
+
+      const updatablePayload = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "brand", items: brands, target, jobId: job.id, template});
+      console.log("updatablePayload:::::::::::::::::::::::::::::::::::::", updatablePayload);
 
       let done = 0;
 
-      if (totalToUpdate >= BRAND_PARALLEL_THRESHOLD) {
-        for (let i = 0; i < payload.length; i += BRAND_PARALLEL_BATCH) {
-          const chunk = payload.slice(i, i + BRAND_PARALLEL_BATCH);
-          console.log(
-            `[Brand Worker] Updating brands ${i + 1}–${i + chunk.length} of ${totalToUpdate} (batch of ${BRAND_PARALLEL_BATCH})`,
-          );
-
-          await Promise.all(chunk.map((item) => putBrand(item)));
-
-          done += chunk.length;
-          await job.updateProgress({
-            stage: "updating",
-            resource: "brands",
-            done,
-            total: totalToUpdate,
-          });
-
-          //2x throttle for parallel updates in batches to avoid rate limiting
-          await new Promise((resolve) => setTimeout(resolve, 2*NORMAL_THROTTLE_MS));
-        }
-      } else {
-        for (const item of payload) {
-          console.log("[Brand Worker] :Updating brand:", item.id, "job id:", job.id);
-          await putBrand(item);
-          done += 1;
-          await job.updateProgress({
-            stage: "updating",
-            resource: "brands",
-            done,
-            total: totalToUpdate,
-          });
-
-          await new Promise((resolve) => setTimeout(resolve, NORMAL_THROTTLE_MS));
-        }
-      }
+      const { done: updatedDone } = await updateBulkBrands({storeHash, updatablePayload, done, NORMAL_THROTTLE_MS, BRAND_PARALLEL_THRESHOLD, BRAND_PARALLEL_BATCH, accessToken, job});
 
       await job.updateProgress({
-        stage: "done",
+        status: "completed",
         resource: "brands",
-        done: totalToUpdate,
-        total: totalToUpdate,
+        processedItems: updatedDone,
+        totalItems: total,
       });
       const updatedJob = await JobHistory.updateOne(
         { jobId: job.id },
         {
-          status: "done",
+          status: "completed",
           completedAt: new Date(),
-          totalItems: totalToUpdate,
-          processedItems: done,
+          totalItems: total,
+          processedItems: updatedDone,
         },
       );
       console.log("[Brand Worker] :Brands bulk update complete.",job.id, "updated job:", updatedJob);
@@ -582,8 +431,3 @@ const bulkOptimizedBrandsWorker = new Worker(
      concurrency: 2,
    },
 );
-
-module.exports = {
-  batchTreeCategoriesUrl,
-  batchUpdateUrl,
-};

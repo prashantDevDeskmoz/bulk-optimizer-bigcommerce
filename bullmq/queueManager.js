@@ -2,9 +2,10 @@ const { Queue } = require("bullmq");
 const redis = require("../redis");
 
 const QUEUE_NAMES = {
-  products:   "bulk-optimized-products",
-  categories: "bulk-optimized-categories",
-  brands:     "bulk-optimized-brands",
+  products:         "bulk-optimized-products",
+  categories:       "bulk-optimized-categories",
+  brands:           "bulk-optimized-brands",
+  restore:          "bulk-restore",
 };
 
 class QueueManager {
@@ -13,17 +14,16 @@ class QueueManager {
     const defaultJobOptions = {
       removeOnFail:     { count: 20 },
       removeOnComplete: { count: 10  },
-      backoff:          { type: "exponential", delay: 1000 },
-      attempts:         3,
     };
     
     const queueConfig = { connection: redis, defaultJobOptions };
     // Create a separate Queue instance for each resource
     //concurrency limit of 10, remove on failed , remove on complete
     this.queues = {
-      [QUEUE_NAMES.products]:   new Queue(QUEUE_NAMES.products, queueConfig),
-      [QUEUE_NAMES.categories]: new Queue(QUEUE_NAMES.categories, queueConfig),
-      [QUEUE_NAMES.brands]:     new Queue(QUEUE_NAMES.brands, queueConfig),
+      [QUEUE_NAMES.products]:           new Queue(QUEUE_NAMES.products, queueConfig),
+      [QUEUE_NAMES.categories]:         new Queue(QUEUE_NAMES.categories, queueConfig),
+      [QUEUE_NAMES.brands]:             new Queue(QUEUE_NAMES.brands, queueConfig),
+      [QUEUE_NAMES.restore]:            new Queue(QUEUE_NAMES.restore, queueConfig),
     };
   }
 

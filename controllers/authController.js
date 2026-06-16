@@ -8,6 +8,7 @@ const {
   SESSION_TTL_SECONDS,
   buildSessionToken,
 } = require("../utils/sessionJwt");
+const { storeUrl } = require("../utils/bcApi");
 const { sendInstallNotificationEmail } = require("../services/emailService");
 const { subscribeWebhooksOnInstall } = require("../utils/webhooks");
 const { syncStoreChannels } = require("../utils/channelSync");
@@ -52,7 +53,7 @@ const handleAuthCallback = async (req, res) => {
 
     // 4. Get the store data from the BigCommerce API
     const { data:storeData } = await axios.get(
-      `https://api.bigcommerce.com/stores/${storeHash}/v2/store`,
+      storeUrl(storeHash),
       {
         headers: {
           "X-Auth-Token": access_token,
@@ -192,7 +193,7 @@ const createSessionFromLoad = async (req, res) => {
     if (!store) {
       return res.status(404).json({
         status: false,
-        message: "Store not installed",
+        message: "Store not installed. Please re-install the app on your BigCommerce store.",
       });
     }
     if (!store.is_active) {

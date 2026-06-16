@@ -1,17 +1,19 @@
+const dotenv = require("dotenv");
+dotenv.config();
 const express = require("express");
 const cors = require("cors");
-const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const apiRouter = require("./routes/index");
 
-dotenv.config();
 
 const PORT = process.env.PORT || 3000;
 const app = express();
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_BASE_URL || true,
+    origin: [
+      process.env.FRONTEND_BASE_URL || "http://localhost:4005",
+    ],
     credentials: true,
   })
 );

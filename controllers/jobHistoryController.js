@@ -1,5 +1,8 @@
 const Store = require("../models/Store");
 const JobHistory = require("../models/JobHistory");
+const {QueueManager, QUEUE_NAMES} = require("../bullmq/queueManager");
+
+queueManager = new QueueManager()
 
 /**
  * GET /job-histories
@@ -14,11 +17,8 @@ const JobHistory = require("../models/JobHistory");
 const getJobHistories = async (req, res) => {
   try {
     const store = await Store.findByHash(req.storeHash);
-    if (!store) {
+    if (!store || !store.is_active) {
       return res.status(404).json({status: false, message: "Store not found"});
-    }
-    if (!store.is_active) {
-      return res.status(403).json({status: false, message: "Store is not active"});
     }
 
     const filter = { storeHash: req.storeHash };
@@ -51,17 +51,51 @@ const getJobHistories = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const [histories, total] = await Promise.all([
-      JobHistory.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+      JobHistory.aggregate([
+        { $match: filter },
+        { $sort: { createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limit },
+        {
+          $addFields: {
+            updateType: {
+              $cond: {
+                if: { $eq: ["$blanksOnly", false] },
+                then: "Update All",
+                else: "Update Blanks",
+              },
+            },
+          },
+        },
+      ]),
       JobHistory.countDocuments(filter),
     ]);
 
+    const enriched = await Promise.all(
+      histories.map(async (history) => {
+        if (history.status !== "pending") return history;
+        const historyKey = history.resource
+
+        try {
+          const job = await queueManager.getJob(QUEUE_NAMES[historyKey], history.jobId);
+          if (!job) return history;
+
+          return {
+            ...history,
+            processedItems : job.progress.processedItems,
+            status : job.progress.status,
+            totalItems : job.progress.totalItems
+          };
+        } catch (err) {
+          console.warn(`Redis fetch failed for jobId ${history.jobId}:`, err.message);
+          return history; // fallback to DB data if Redis fails
+        }
+      })
+    );
+
     return res.status(200).json({
       status: true,
-      data: histories,
+      data: enriched,
       pagination: {
         page,
         limit,

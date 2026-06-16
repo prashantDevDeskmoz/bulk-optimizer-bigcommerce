@@ -1,5 +1,6 @@
 const axios = require("axios");
 const Channel = require("../models/Channel");
+const { channelSiteUrl, listChannelsUrl } = require("./bcApi");
 
 /**
  * Fetches all channels for a store (GET /v3/channels).
@@ -7,7 +8,7 @@ const Channel = require("../models/Channel");
  */
 async function fetchAllBigCommerceChannels(storeHash, accessToken) {
   const response = await axios.get(
-    `https://api.bigcommerce.com/stores/${storeHash}/v3/channels`,
+    listChannelsUrl(storeHash),
     {
       headers: {
         "X-Auth-Token": accessToken,
@@ -32,7 +33,7 @@ async function fetchAllBigCommerceChannels(storeHash, accessToken) {
 async function getChannelSiteUrl(storeHash, accessToken, channelId) {
   try {
     const { data } = await axios.get(
-      `https://api.bigcommerce.com/stores/${storeHash}/v3/channels/${channelId}/site`,
+      channelSiteUrl(storeHash, channelId),
       {
         headers: {
           "X-Auth-Token": accessToken,

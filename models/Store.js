@@ -72,6 +72,10 @@ const storeSchema = new mongoose.Schema(
         type: String,
         default: null,
       },
+      planPurchasedAt: {
+        type: Date,
+        default: null,
+      },
     },
     {
       timestamps: true,

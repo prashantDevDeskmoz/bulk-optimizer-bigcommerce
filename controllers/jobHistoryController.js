@@ -74,7 +74,7 @@ const getJobHistories = async (req, res) => {
     const enriched = await Promise.all(
       histories.map(async (history) => {
         if (history.status !== "pending") return history;
-        const historyKey = history.resource
+        const historyKey = history.resource === "products" && history.target === "alt" ? "images" : history.resource
 
         try {
           const job = await queueManager.getJob(QUEUE_NAMES[historyKey], history.jobId);

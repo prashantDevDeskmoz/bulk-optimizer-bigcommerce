@@ -6,12 +6,13 @@ const router = Router();
 
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
 const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET;
-const BASE_URL = "https://api-m.sandbox.paypal.com"; // Use https://api-m.paypal.com for production
+const ENVIRONMENT = process.env.ENVIRONMENT;
+
+const BASE_URL = ENVIRONMENT === "development" ? "https://api-m.sandbox.paypal.com" : "https://api-m.paypal.com";
 
 async function getPaypalAccessToken() {
     const credentials = PAYPAL_CLIENT_ID + ":" + PAYPAL_CLIENT_SECRET;
     const auth = Buffer.from(credentials).toString("base64");
-    console.log("auth", auth);
   
     const response = await fetch(`${BASE_URL}/v1/oauth2/token`, {
         method: "POST",
@@ -21,7 +22,6 @@ async function getPaypalAccessToken() {
             "Content-Type": "application/x-www-form-urlencoded",
         },
     });
-  console.log("response", response);
   const data = await response.json();
   return data.access_token;
 }

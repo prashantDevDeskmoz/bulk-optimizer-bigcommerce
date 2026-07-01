@@ -25,14 +25,8 @@ async function fetchTreeIdsForChannel(storeHash, bcChannelId, headers) {
  */
 const getChannelPreviewSamples = async (req, res) => {
   try {
-    const bcChannelIdRaw = req.query.bcChannelId;
-    const bcChannelId = Number(bcChannelIdRaw);
-    if (
-      bcChannelIdRaw === undefined ||
-      bcChannelIdRaw === null ||
-      bcChannelIdRaw === "" ||
-      !Number.isFinite(bcChannelId)
-    ) {
+    const bcChannelId = req.query.bcChannelId;
+    if (!bcChannelId || bcChannelId === "") {
       return res.status(400).json({
         status: false,
         message: "bcChannelId query parameter is required",
@@ -66,7 +60,7 @@ const getChannelPreviewSamples = async (req, res) => {
       "Content-Type": "application/json",
       "X-Auth-Token": accessToken,
     };
-
+    // fetch category start ----------------
     const treeIds = await fetchTreeIdsForChannel(
       req.storeHash,
       bcChannelId,
@@ -79,7 +73,7 @@ const getChannelPreviewSamples = async (req, res) => {
         headers,
         params: {
           page: 1,
-          limit: 10,
+          limit: 20,
           "tree_id:in": treeIds.join(","),
         },
       });
@@ -90,24 +84,28 @@ const getChannelPreviewSamples = async (req, res) => {
       category = category ?? rows[0] ?? null;
     }
 
+    // fetch product start ----------------
     let product = null;
+    let productImage = null;
     try {
       const { data } = await axios.get(listProductsUrl(req.storeHash), {
-        headers,
-        params: {
-          page: 1,
-          limit: 10,
-          "channel_id:in": bcChannelId,
-          include: "images",
+          headers,
+          params: {
+            page: 1,
+            limit: 20,
+            "channel_id:in": bcChannelId,
+            include: "images",
         },
       });
 
       product = data.data.find(product => product.page_title != "" && product.meta_description != "");
+      productImage = data.data.find(product => product.images && product.images.length > 0 && product.images.some(image => image.description && image.description != "" ));
 
-      console.log("product", data.data.length);
+      console.log("productImage", productImage);
 
       const rows = Array.isArray(data?.data) ? data.data : [];
       product = product ?? rows[0] ?? null;
+      productImage = productImage ?? rows[0] ?? null;
     } catch {
       /* channel filter may be unsupported — fall back */
     }
@@ -123,7 +121,7 @@ const getChannelPreviewSamples = async (req, res) => {
 
     return res.status(200).json({
       status: true,
-      data: { product, category },
+      data: { product, category, productImage },
     });
   } catch (error) {
     const status = error.response?.status;

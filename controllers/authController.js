@@ -12,7 +12,6 @@ const { storeUrl } = require("../utils/bcApi");
 const { sendInstallNotificationEmail } = require("../services/emailService");
 const { subscribeWebhooksOnInstall } = require("../utils/webhooks");
 const { syncStoreChannels } = require("../utils/channelSync");
-
 const handleAuthCallback = async (req, res) => {
   try {
     console.log("Callback received:", req.query);
@@ -83,7 +82,7 @@ const handleAuthCallback = async (req, res) => {
       { upsert: true, returnDocument: "after" },
     );
 
-    // 6. Sync channels from BigCommerce into DB (needs e.g. store_channel_settings on token)
+    // 6. Sync channels from BigCommerce into our DB (needs e.g. store_channel_settings on token)
     try {
       const { count } = await syncStoreChannels(storeHash, access_token, store._id);
       console.log(`✅ Synced ${count} channel(s) for store ${storeHash}`);
@@ -114,6 +113,18 @@ const handleAuthCallback = async (req, res) => {
     redirectUrl.searchParams.set("storeId", storeData?.id.toString());
     redirectUrl.searchParams.set("sessionToken", sessionToken);
     redirectUrl.searchParams.set("sessionExpiresAt", sessionExpiresAt.toString());
+    //set cookie sessionToken
+    const cookieOptions = {
+      httpOnly: true,
+      sameSite: "none",
+      secure: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: "/",
+      domain : ".shares.zrok.io"
+    };
+    
+    res.cookie("sessionToken", sessionToken, cookieOptions);
+    res.cookie("storeId", storeData?.id.toString(), cookieOptions);
 
     res.send(`
         <!DOCTYPE html>
@@ -161,46 +172,29 @@ const handleAuthCallback = async (req, res) => {
 const createSessionFromLoad = async (req, res) => {
   try {
     const signed_payload_jwt = req.body?.signed_payload_jwt;
-    console.log("signed_payload_jwt", signed_payload_jwt);
+
     if (!signed_payload_jwt || typeof signed_payload_jwt !== "string") {
-      return res.status(400).json({
-        status: false,
-        message: "Missing signed_payload_jwt",
-      });
+      return res.status(400).json({ status: false, message: "Missing signed_payload_jwt" });
     }
 
     let bcPayload;
     try {
       bcPayload = verifySignedPayloadJwt(signed_payload_jwt);
     } catch {
-      return res.status(401).json({
-        status: false,
-        message: "Invalid or expired signed_payload_jwt",
-      });
+      return res.status(401).json({ status: false, message: "Invalid or expired signed_payload_jwt" });
     }
-
-    console.log("bcPayloadpppppppppppppp", bcPayload);
 
     const storeHash = storeHashFromSub(bcPayload.sub);
     if (!storeHash) {
-      return res.status(400).json({
-        status: false,
-        message: "Invalid store subject in token",
-      });
+      return res.status(400).json({ status: false, message: "Invalid store subject in token" });
     }
 
     const store = await Store.findByHash(storeHash);
     if (!store) {
-      return res.status(404).json({
-        status: false,
-        message: "Store not installed. Please re-install the app on your BigCommerce store.",
-      });
+      return res.status(404).json({ status: false, message: "Store not installed. Please re-install the app on your BigCommerce store." });
     }
     if (!store.is_active) {
-      return res.status(403).json({
-        status: false,
-        message: "Store is not active",
-      });
+      return res.status(403).json({ status: false, message: "Store is not active" });
     }
 
     const sessionToken = createAppSessionToken({ storeHash, bcPayload });
@@ -244,4 +238,5 @@ const handleUnInstall = async (req, res) => {
 module.exports = {
   handleAuthCallback,
   createSessionFromLoad,
+  handleUnInstall,
 };

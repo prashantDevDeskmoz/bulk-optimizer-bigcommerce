@@ -5,6 +5,7 @@ const QUEUE_NAMES = {
   products:         "bulk-optimized-products",
   categories:       "bulk-optimized-categories",
   brands:           "bulk-optimized-brands",
+  images:           "bulk-optimized-images",
   restore:          "bulk-restore",
 };
 
@@ -23,6 +24,7 @@ class QueueManager {
       [QUEUE_NAMES.products]:           new Queue(QUEUE_NAMES.products, queueConfig),
       [QUEUE_NAMES.categories]:         new Queue(QUEUE_NAMES.categories, queueConfig),
       [QUEUE_NAMES.brands]:             new Queue(QUEUE_NAMES.brands, queueConfig),
+      [QUEUE_NAMES.images]:             new Queue(QUEUE_NAMES.images, queueConfig),
       [QUEUE_NAMES.restore]:            new Queue(QUEUE_NAMES.restore, queueConfig),
     };
   }

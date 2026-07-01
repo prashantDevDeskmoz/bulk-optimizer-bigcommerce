@@ -35,7 +35,7 @@ const updateBulk = async (req, res) => {
 
         const { planLimitReached, canBeUpdated } = await getPlanAndCheckLimit(store);
 
-        if(planLimitReached || canBeUpdated <= 0) {
+        if(planLimitReached || (canBeUpdated !== null && canBeUpdated <= 0)) {
             return res.status(400).json({ status: false, message: "You have reached your monthly plan limit. Upgrade your plan to continue." });
         }
         console.log("canBeUpdated:::::::::::::::::::::::::::::::::::::", canBeUpdated, "planLimitReached:::::::::::::::::::::::::::::::::::::", planLimitReached);
@@ -56,7 +56,8 @@ const updateBulk = async (req, res) => {
 
         let job = null;
 
-        if(applyTo === "products") job = await queueManager.addJob(QUEUE_NAMES.products, jobData, { jobId: `products-${Date.now()}-${req.storeHash}` });
+        if(applyTo === "products" && target === "alt") job = await queueManager.addJob(QUEUE_NAMES.images, jobData, { jobId: `images-${Date.now()}-${req.storeHash}` });
+        else if(applyTo === "products") job = await queueManager.addJob(QUEUE_NAMES.products, jobData, { jobId: `products-${Date.now()}-${req.storeHash}` });
         else if(applyTo === "categories") job = await queueManager.addJob(QUEUE_NAMES.categories, jobData, { jobId: `categories-${Date.now()}-${req.storeHash}` });
         else if(applyTo === "brands") job = await queueManager.addJob(QUEUE_NAMES.brands, jobData, { jobId: `brands-${Date.now()}-${req.storeHash}` });
         else return res.status(400).json({ status: false, message: "Invalid type" });
@@ -114,6 +115,7 @@ const saveTemplates = async (req, res) => {
         const store = await Store.findByHash(req.storeHash);
         if (!store) {return res.status(404).json({ status: false, message: "Store not found" })}
 
+        // check template exists else create new one
         await Template.findOneAndUpdate({
             storeId: store._id,
             bcChannelId,
@@ -129,10 +131,9 @@ const saveTemplates = async (req, res) => {
 }
 
 const getAllTemplates = async (req, res) => {
-    console.log("getAllTemplates:::::::::::::::::::::::::::::::::::::", req.storeHash);
     try {
         const store = await Store.findByHash(req.storeHash);
-        if (!store) {return res.status(404).json({ status: false, message: "Store not found" })}
+        if (!store || !store.is_active) {return res.status(404).json({ status: false, message: "Store not found or is not active" })}
 
         const templates = await Template.find({ storeId: store._id });
 
@@ -145,68 +146,28 @@ const getAllTemplates = async (req, res) => {
     }
 };
 
-const getJobStatus = async (req, res) => {
-    try {
-        const { jobId } = req.body;
-        const enriched = await Promise.all(
-      histories.map(async (history) => {
-        if (history.status !== "pending") return history;
-
-        try {
-          const job = await queueManager.getJob(QUEUE_NAMES.products, history.jobId);
-          if (!job) return history;
-
-          return {
-            ...history,
-            redis: {
-              jobState: await job.getState(),         // waiting, active, delayed, etc.
-              progress: job.progress,                  // 0-100 if you track progress
-              processedOn: job.processedOn ?? null,
-              finishedOn: job.finishedOn ?? null,
-              failedReason: job.failedReason ?? null,
-              attemptsMade: job.attemptsMade ?? 0,
-            },
-          };
-        } catch (err) {
-          console.warn(`Redis fetch failed for jobId ${history.jobId}:`, err.message);
-          return history; // fallback to DB data if Redis fails
-        }
-      })
-    );
-        console.log("job:::::::::::::::::::::::::::::::::::::", job);
-        return res.status(200).json({ status: true, data: job.progress });
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ status: false, message: error.message });
-    }
-}
-
 const getDashboardInfo = async (req, res) => {
     try {
         const store = await Store.findByHash(req.storeHash);
-        if (!store) {return res.status(404).json({ status: false, message: "Store not found" })}
+        if (!store || !store.is_active) {return res.status(404).json({ status: false, message: "Store not found or is not active" })}
 
         const accessToken = store.access_token;
 
         // get Total Products, Optimized Products, Queue, Quota Used
-        //1. Total Products from bc api limit 1 , meta.pagination.total_items
 
+        //1. Bc api hit to get total count not products (for this we are using limit : 1)
         const products = await axios.get(listProductsUrl(req.storeHash), {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 "X-Auth-Token": accessToken,
                 "Content-Type": "application/json",
             },
-            params: {
-                limit: 1,
-            },
+            params: { limit: 1 },
         });
-
-        console.log("products:::::::::::::::::::::::::::::::::::::", products.data);
 
         const totalProducts = products.data.meta.pagination.total;
 
-        //2. Optimized Products from JobHistory where storeHash = req.storeHash and status = "completed"
+        //2. Optimized Products from JobHistory where storeHash = req.storeHash and status = "completed" (sum of processedItems)
         const optimizedItems = await JobHistory.aggregate([
             { $match: { storeHash: req.storeHash } },
             { $group: { _id: null, total: { $sum: "$processedItems" } } },
@@ -233,6 +194,5 @@ module.exports = {
     updateCruiseControl,
     saveTemplates,
     getAllTemplates,
-    getJobStatus,
     getDashboardInfo
 }

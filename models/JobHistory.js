@@ -15,10 +15,16 @@ const jobHistorySchema = new mongoose.Schema(
     startedAt:      { type: Date, default: Date.now },
     completedAt:    { type: Date, default: null },
     cruiseControl:  { type: Boolean, default: false },
-    error:          { type: String, default: null },
-    restoreStatus:  { type: String, enum: ["pending", "completed", "failed"], default: null },
+    errorLog:         { type: [
+      {
+        itemId: { type: Number },
+        imageId: { type: Number , default: null},
+        message: { type: String },
+      },
+    ], default: [] },
+    restoreStatus: { type: String, enum: ["pending", "completed", "failed"], default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("job_history", jobHistorySchema);

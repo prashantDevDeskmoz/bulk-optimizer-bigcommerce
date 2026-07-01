@@ -2,6 +2,7 @@ const axios = require("axios");
 const Store = require("../models/Store");
 const ItemSnapshot = require("../models/ItemSnapshot");
 const JobHistory = require("../models/JobHistory");
+const RestoreHistory = require("../models/RestoreHistory");
 const { QueueManager, QUEUE_NAMES } = require("../bullmq/queueManager");
 const { batchUpdateProductsUrl, batchUpdateCategoriesUrl, updateBrandUrl, updateImageUrl } = require("../utils/bcApi");
 const queueManager = new QueueManager();
@@ -17,7 +18,7 @@ const getRestoreItems = async (req, res) => {
         ...(itemType !== "brand" ? {bcChannelId} : {}), 
         itemType: itemType,
         "fields.name": {$regex: search, $options: "i"},
-        is_restored: {$ne: true}
+        // is_restored: {$ne: true}
         }
       },
       {$sort : {capturedAt: -1}},
@@ -27,7 +28,7 @@ const getRestoreItems = async (req, res) => {
           name : {$first : "$fields.name"},
           target : {$push : "$target"},
           capturedAt : {$push : "$capturedAt"},
-          slot : {$push : "$slot"},
+          // slot : {$push : "$slot"},  // will be used later for if more than 1 snapshots are needed for a single item
           pageUrl : {$first : "$fields.item_url"},
         }
       },
@@ -53,13 +54,13 @@ const restoreItems = async (req, res) => {
   console.log("[restoreItems]", req.body);
 
   try {
-    const { itemId, target , itemType, slot = 1 } = req.body;
+    const { itemId, target , itemType} = req.body;
     const store = await Store.findByHash(req.storeHash);
     if(!store) {
       return res.status(404).json({ status: false, message: "Store not found" });
     }
 
-    const item = await ItemSnapshot.findOne({ itemId, target, itemType,slot, storeHash: req.storeHash });
+    const item = await ItemSnapshot.findOne({ itemId, target, itemType, storeHash: req.storeHash });
     if(!item) {
       return res.status(404).json({ status: false, message: "Item not found" });
     }
@@ -96,7 +97,7 @@ const restoreItems = async (req, res) => {
       return res.status(400).json({ status: false, message: "Invalid target or item type" });
     }
 
-    await item.updateOne({ $set: { is_restored: true } });
+    await item.deleteOne();
     return res.status(200).json({ status: true, message: "Item restored successfully" });
 
   } catch (error) {
@@ -106,7 +107,32 @@ const restoreItems = async (req, res) => {
 }
 
 const getRestoreHistory = async (req, res) => {
-}
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const [records, total] = await Promise.all([
+      RestoreHistory.find({ storeHash: req.storeHash })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      RestoreHistory.countDocuments({ storeHash: req.storeHash }),
+    ]);
+
+    return res.status(200).json({
+      status: true,
+      data: records,
+      total,
+      page,
+      limit,
+    });
+  } catch (error) {
+    console.error("[getRestoreHistory]", error);
+    return res.status(500).json({ status: false, message: error.message, data: [] });
+  }
+};
 
 const bulkRestore = async (req, res) => {
   try {
@@ -114,25 +140,72 @@ const bulkRestore = async (req, res) => {
 
     const store = await Store.findByHash(req.storeHash);
 
-    if(!store) {
+    if (!store) {
       return res.status(404).json({ status: false, message: "Store not found" });
     }
-    const jobHistory = await JobHistory.findOne({ restoreStatus: { $in: ["pending"] } });
 
-    if(jobHistory) {
-      return res.status(400).json({ status: false, message: "Restore job already in progress, please wait for it to complete" });
+    const sourceJob = await JobHistory.findOne({ jobId, storeHash: req.storeHash });
+    if (!sourceJob) {
+      return res.status(404).json({ status: false, message: "Bulk job not found" });
+    }
+    if (sourceJob.status !== "completed") {
+      return res.status(400).json({ status: false, message: "Bulk job is not completed yet" });
     }
 
-    const addJob = await queueManager.addJob(QUEUE_NAMES.restore, { jobId, accessToken: store.access_token, storeHash: req.storeHash });
+    const snapshotCount = await ItemSnapshot.countDocuments({ jobHistoryId: jobId });
+    if (snapshotCount === 0) {
+      return res.status(400).json({ status: false, message: "No snapshots available to restore" });
+    }
 
+    const pendingRestore = await RestoreHistory.findOne({
+      storeHash: req.storeHash,
+      status: "pending",
+    });
+    if (pendingRestore) {
+      return res.status(400).json({
+        status: false,
+        message: "Restore job already in progress, please wait for it to complete",
+      });
+    }
 
-    await JobHistory.updateOne({ jobId }, { $set: { restoreStatus: "pending" } });
-    return res.status(200).json({ status: true, message: "Restore Job added to queue" });
+    const pendingForJob = await RestoreHistory.findOne({
+      sourceJobId: jobId,
+      status: "pending",
+    });
+    if (pendingForJob) {
+      return res.status(400).json({
+        status: false,
+        message: "A restore for this job is already in progress",
+      });
+    }
+
+    const bullJob = await queueManager.addJob(QUEUE_NAMES.restore, {
+      sourceJobId: jobId,
+      accessToken: store.access_token,
+      storeHash: req.storeHash,
+    });
+
+    await RestoreHistory.create({
+      restoreJobId: bullJob.id,
+      sourceJobId: jobId,
+      storeHash: req.storeHash,
+      bcChannelId: sourceJob.bcChannelId,
+      resource: sourceJob.resource,
+      target: sourceJob.target,
+      status: "pending",
+      totalItems: snapshotCount,
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: "Restore Job added to queue",
+      restoreJobId: bullJob.id,
+    });
   } catch (error) {
     console.error("[bulkRestore]", error);
     return res.status(500).json({ status: false, message: error.message });
   }
-}
+};
 
 const getRestoreJobs = async (req, res) => {
   try {
@@ -142,20 +215,29 @@ const getRestoreJobs = async (req, res) => {
     }
 
     const limit = 10;
-    const collectionName = JobHistory.collection.name;
 
+    const jobsPerGroup = 2;
+    const collectionName = JobHistory.collection.name;
+    const restoreCollectionName = RestoreHistory.collection.name;
     const [result] = await ItemSnapshot.aggregate([
       {
         $match: {
           storeHash: req.storeHash,
-          is_restored: { $ne: true },
           jobHistoryId: { $exists: true, $ne: null },
         },
       },
       {
         $group: {
           _id: "$jobHistoryId",
-          restorableCount: { $sum: 1 },
+          restorableCount: {
+            $sum: {
+              $cond: {
+                if: { $eq: ["$target", "alt"] },
+                then: { $size: { $ifNull: ["$fields.images", []] } },
+                else: 1,
+              },
+            },
+          },
         },
       },
       {
@@ -168,17 +250,82 @@ const getRestoreJobs = async (req, res) => {
       },
       { $unwind: "$jobHistory" },
       {
+        $lookup: {
+          from: restoreCollectionName,
+          let: { sourceJobId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$sourceJobId", "$$sourceJobId"] },
+                    { $eq: ["$status", "completed"] },
+                  ],
+                },
+              },
+            },
+            { $limit: 1 },
+          ],
+          as: "completedRestore",
+        },
+      },
+      {
         $match: {
           "jobHistory.storeHash": req.storeHash,
           "jobHistory.status": "completed",
-          "jobHistory.restoreStatus": { $in: [null, "pending"] },
+          restorableCount: { $gt: 0 },
+          completedRestore: { $size: 0 },
+        },
+      },
+      {
+        $lookup: {
+          from: restoreCollectionName,
+          let: { sourceJobId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$sourceJobId", "$$sourceJobId"] } } },
+            { $sort: { createdAt: -1 } },
+            { $limit: 1 },
+          ],
+          as: "restoreHistory",
+        },
+      },
+      {
+        $addFields: {
+          restoreHistory: { $arrayElemAt: ["$restoreHistory", 0] },
+        },
+      },
+      {
+        $sort: {
+          "jobHistory.completedAt": -1,
+          "jobHistory.startedAt": -1,
+        },
+      },
+      {
+        // Up to 2 recent jobs per resource + target (e.g. product/alt, category/meta)
+        $group: {
+          _id: {
+            resource: "$jobHistory.resource",
+            target: "$jobHistory.target",
+          },
+          jobs: { $push: "$$ROOT" },
+        },
+      },
+      {
+        $project: {
+          jobs: { $slice: ["$jobs", jobsPerGroup] },
+        },
+      },
+      { $unwind: "$jobs" },
+      { $replaceRoot: { newRoot: "$jobs" } },
+      {
+        $sort: {
+          "jobHistory.completedAt": -1,
+          "jobHistory.startedAt": -1,
         },
       },
       {
         $facet: {
           jobs: [
-            { $sort: { "jobHistory.completedAt": -1, "jobHistory.startedAt": -1 } },
-            { $limit: limit },
             {
               $project: {
                 _id: 0,
@@ -193,7 +340,8 @@ const getRestoreJobs = async (req, res) => {
                 blanksOnly: "$jobHistory.blanksOnly",
                 startedAt: "$jobHistory.startedAt",
                 completedAt: "$jobHistory.completedAt",
-                restoreStatus: "$jobHistory.restoreStatus",
+                restoreStatus: "$restoreHistory.status",
+                bcChannelId: "$jobHistory.bcChannelId",
                 updateType: {
                   $cond: {
                     if: { $eq: ["$jobHistory.blanksOnly", false] },

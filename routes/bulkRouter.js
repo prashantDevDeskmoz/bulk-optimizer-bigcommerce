@@ -5,7 +5,6 @@ const {
   updateCruiseControl,
   saveTemplates,
   getAllTemplates,
-  getJobStatus,
   getDashboardInfo
 } = require("../controllers/bulkController");
 
@@ -15,7 +14,6 @@ router.post("/update", requireAppSession, updateBulk);
 router.post("/cruise-control", requireAppSession, updateCruiseControl);
 router.post("/save-templates", requireAppSession, saveTemplates);
 router.get("/get-all-templates", requireAppSession, getAllTemplates);
-router.post("/get-job-status", requireAppSession, getJobStatus);
 router.get("/get-dashboard-info", requireAppSession, getDashboardInfo);
 
 module.exports = router;

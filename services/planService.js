@@ -14,6 +14,7 @@ const getPlanAndCheckLimit = async (store) => {
         }
         return d;
       }
+      
     try{
         const plan = await Plan.findOne({ name: store.plan });
         if(!plan) {
@@ -40,21 +41,20 @@ const getPlanAndCheckLimit = async (store) => {
 
         const aggregateResult = await JobHistory.aggregate([
             { $match: 
-                { storeHash: store.store_hash, status: {$in: ["completed"]}, startedAt : {$gte : cycleStart , $lt : cycleEnd} }
+                { storeHash: store.store_hash, status: {$in: ["completed", "failed"]}, startedAt : {$gte : cycleStart , $lt : cycleEnd} }
             },
             { $group:
                  { _id: "$storeHash", totalItems: { $sum: "$processedItems" } }  
             },
         ]);
 
-        console.log("aggregateResult:::::::::::::::::::::::::::::::::::::", aggregateResult,cycleStart,cycleEnd);
 
         const totalItemsProcessed = aggregateResult[0]?.totalItems || 0;
 
         const planLimitReached = totalItemsProcessed >= plan.itemLimit;
         const canBeUpdated = plan.itemLimit - totalItemsProcessed ;
 
-        return { planLimitReached, usage: totalItemsProcessed, canBeUpdated , planLimit: plan.itemLimit };
+        return { planLimitReached, usage: totalItemsProcessed, canBeUpdated, planLimit: plan.itemLimit };
 
     } catch (error) {
         console.error(error);

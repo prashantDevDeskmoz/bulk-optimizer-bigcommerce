@@ -6,7 +6,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log("Workers: MongoDB connected");
-    require("./bulk-optimizer");  // registers product/category/brand workers
+    require("./bulk-optimizer");  // registers product/category/brand/image workers
     require("./restore");         // registers restore worker
     console.log("All workers started");
   })

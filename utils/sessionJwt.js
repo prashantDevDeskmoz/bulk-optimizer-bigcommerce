@@ -19,7 +19,10 @@ function verifySignedPayloadJwt(token) {
   if (!secret || !clientId) {
     throw new Error("CLIENT_SECRET and CLIENT_ID must be set");
   }
-  return jwt.verify(token, secret);
+  // console.log("[verifySignedPayloadJwt] jwt.verify(token, secret):", jwt.verify(token, secret));
+  return jwt.verify(token, secret, {
+    clockTolerance : 60 // 60 seconds
+  });                                             
 }
 
 function getSessionSigningSecret() {

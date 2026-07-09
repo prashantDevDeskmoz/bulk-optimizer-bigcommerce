@@ -23,6 +23,7 @@ const jobHistorySchema = new mongoose.Schema(
       },
     ], default: [] },
     restoreStatus: { type: String, enum: ["pending", "completed", "failed"], default: null },
+    errorMessage:          { type: String, default: null },
   },
   { timestamps: true },
 );

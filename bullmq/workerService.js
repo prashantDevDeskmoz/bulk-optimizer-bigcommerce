@@ -305,6 +305,7 @@ const updateSnapshotAndReturnUpdatablePayload = async ({storeHash, itemType, ite
 const updateBulkCategories = async ({ storeHash, updatablePayload, done, accessToken, job, bulkOperations, type = "bulk" }) => {
     let failedIds = [];
     let lastUpdatedId = null;
+    console.log("[updateBulkCategories]: updatablePayload:::::::::::::::::::::::::::::::::", updatablePayload);
     try {
         for (let i = 0; i < updatablePayload.length; i += CATEGORY_BATCH) {
             const chunk = updatablePayload.slice(i, i + CATEGORY_BATCH);
@@ -367,7 +368,8 @@ const updateBulkCategories = async ({ storeHash, updatablePayload, done, accessT
                 ...job.progress,
                 status: "updating",
                 resource: "categories",
-                processedItems: done
+                processedItems: done,
+                lastUpdatedId: lastUpdatedId,
             });
             // Throttle based on remaining rate limit
             const remaining = rateLimitHeaders?.["x-rate-limit-requests-left"];
@@ -389,7 +391,11 @@ const updateBulkCategories = async ({ storeHash, updatablePayload, done, accessT
         }
         await job.updateProgress({ ...job.progress, status: "failed", processedItems: done });
         console.error("[Category Worker] Fatal error:", error?.response?.data ?? error.message);
-        throw error;
+
+        const err = new Error(error?.response?.data?.message ?? error.message ?? "Error updating bulk categories");
+        err.failedIds = failedIds;
+        err.lastUpdatedId = lastUpdatedId;
+        throw err;
     }
 }
 
@@ -446,6 +452,7 @@ const updateBulkBrands = async ({ storeHash, updatablePayload, done, accessToken
                   status: "updating",
                   resource: "brands",
                   processedItems : done,
+                  lastUpdatedId: lastUpdatedId,
                 });
       
                 await new Promise((resolve) => setTimeout(resolve, NORMAL_THROTTLE_MS));
@@ -464,13 +471,16 @@ const updateBulkBrands = async ({ storeHash, updatablePayload, done, accessToken
         return { done, updatedBulkOperations, failedIds };
     }catch(error) {
 
+        const failedIds = failedObjects.map(object => object.itemId);
         if(type === "bulk"){ 
-            const failedIds = failedObjects.map(object => object.itemId);
             await saveSnapshot({ lastUpdatedId, failedIds, bulkOperations, slice: true });
         }
         await job.updateProgress({ ...job.progress, status: "failed", processedItems: done });
-        console.error("Error updating bulk brands:", error);
-        throw error;
+
+        const err = new Error(error?.response?.data?.message ?? error.message ?? "Error updating bulk products");
+        err.failedIds = failedIds;
+        err.lastUpdatedId = lastUpdatedId;
+        throw err;
     }
 }
 
@@ -542,7 +552,7 @@ const updateBulkProducts = async ({ storeHash, updatablePayload, done, accessTok
                 }
             }
     
-            await job.updateProgress({ ...job.progress, status: "updating", processedItems: done });
+            await job.updateProgress({ ...job.progress, status: "updating", processedItems: done, lastUpdatedId: lastUpdatedId });
     
             // Light throttling to avoid rate limiting
             const remaining = response?.headers["x-rate-limit-requests-left"];
@@ -551,9 +561,9 @@ const updateBulkProducts = async ({ storeHash, updatablePayload, done, accessTok
                 console.log("sleeping for", 10*NORMAL_THROTTLE_MS);
               await new Promise(r => setTimeout(r, 10*NORMAL_THROTTLE_MS));
             }else{
-              await new Promise(r => setTimeout(r, 3*NORMAL_THROTTLE_MS));
+              await new Promise(r => setTimeout(r, NORMAL_THROTTLE_MS));
             }
-          }
+        }
         let updatedBulkOperations = [];
 
         if(type === "bulk"){ 
@@ -564,9 +574,13 @@ const updateBulkProducts = async ({ storeHash, updatablePayload, done, accessTok
         if(type === "bulk"){ 
             await saveSnapshot({ lastUpdatedId, failedIds, bulkOperations, slice: true });
         }
-        await job.updateProgress({ ...job.progress, status: "failed", processedItems: done });
+        await job.updateProgress({ ...job.progress, status: "failed", processedItems: done, lastUpdatedId: lastUpdatedId });
         console.error("Error updating bulk products:", error);
-        throw new Error(error.message);
+
+        const err = new Error(error?.response?.data?.message ?? error.message ?? "Error updating bulk products");
+        err.failedIds = failedIds;
+        err.lastUpdatedId = lastUpdatedId;
+        throw err;
     }
 }
 
@@ -608,7 +622,7 @@ async function binarySearchFailedCategories(chunk, storeHash, accessToken) {
     return failedIds;
 }
 
-const updateBulkImageAltText = async ({ storeHash, updatablePayload, done, accessToken, bulkOperations, blanksOnly, canBeUpdated, job, type = "bulk" }) => {
+const updateBulkImageAltText = async ({ storeHash, updatablePayload, done, accessToken, bulkOperations, canBeUpdated, job, type = "bulk" }) => {
     let failedImages = [];
     let lastUpdatedImageId = null;
     let lastUpdatedProductId = null;
@@ -617,8 +631,6 @@ const updateBulkImageAltText = async ({ storeHash, updatablePayload, done, acces
 
         for (const product of updatablePayload) {
             for (const image of product.images ?? []) {
-                if (!image?.id) continue;
-                if (blanksOnly && image.description !== "") continue;
                 imageUpdates.push({
                     productId: product.id,
                     imageId: image.id,
@@ -627,13 +639,13 @@ const updateBulkImageAltText = async ({ storeHash, updatablePayload, done, acces
             }
         }
 
-        const totalImages = imageUpdates.length;
-
         if (canBeUpdated !== undefined && canBeUpdated !== null) {
             imageUpdates = imageUpdates.slice(0, canBeUpdated);
         }
 
-        await job.updateProgress({ status: "updating", processedItems: 0, totalItems: totalImages });
+        const totalImages = imageUpdates.length;
+
+        await job.updateProgress({...job.progress, status: "updating", processedItems: 0});
 
         for (let i = 0; i < imageUpdates.length; i += PRODUCT_BATCH_LIMIT) {
             const chunk = imageUpdates.slice(i, i + PRODUCT_BATCH_LIMIT);
@@ -669,13 +681,19 @@ const updateBulkImageAltText = async ({ storeHash, updatablePayload, done, acces
                 }
                 // Fatal — stop entire image job
                 console.error(`[Image Worker] Fatal error image productId=${chunk[index].productId}, imageId=${chunk[index].imageId}, status=${status}`);
-                throw reason;
+                const fatalErr = reason instanceof Error ? reason : new Error(reason?.message ?? "Unrecoverable image update error");
+                fatalErr.lastUpdatedProductId = lastUpdatedProductId;
+                fatalErr.lastUpdatedImageId = lastUpdatedImageId;
+                fatalErr.failedImages = failedImages;
+                throw fatalErr;
             }
 
             await job.updateProgress({
+                ...job.progress,
                 status: "updating",
                 processedItems: done,
-                totalItems: totalImages,
+                lastUpdatedProductId,
+                lastUpdatedImageId,
             });
 
             if (remaining < RATE_LIMIT_LOW_THRESHOLD) {
@@ -697,14 +715,24 @@ const updateBulkImageAltText = async ({ storeHash, updatablePayload, done, acces
             await pushItemErrorLog({ job, type, entries: failedImages });
         }
 
-        return { done, totalImages };
+        return { done, totalImages, failedImages };
     } catch (error) {
-        await job.updateProgress({ ...job.progress, status: "failed", processedItems: done });
+        await job.updateProgress({
+            ...job.progress,
+            status: "failed",
+            processedItems: done,
+            lastUpdatedProductId,
+            lastUpdatedImageId,
+        });
         if(type === "bulk"){ 
             await saveImageSnapshot({ lastUpdatedImageId, lastUpdatedProductId, failedImages, bulkOperations, slice: true });
         }
         console.error("Error updating bulk image alt text:", error);
-        throw error;
+        const err = error instanceof Error ? error : new Error(error?.message ?? "Error updating bulk image alt text");
+        err.lastUpdatedProductId = lastUpdatedProductId;
+        err.lastUpdatedImageId = lastUpdatedImageId;
+        err.failedImages = failedImages;
+        throw err;
     }
 };
 

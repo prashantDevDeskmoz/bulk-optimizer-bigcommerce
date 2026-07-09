@@ -34,5 +34,9 @@ itemSnapshotSchema.index(
     { storeHash: 1, itemType: 1, target: 1, itemId: 1 },{unique: true}
 );
 
+itemSnapshotSchema.index(
+    { jobHistoryId: 1 }
+);
+
 const ItemSnapshot = mongoose.model("item_snapshot", itemSnapshotSchema);
 module.exports = ItemSnapshot;

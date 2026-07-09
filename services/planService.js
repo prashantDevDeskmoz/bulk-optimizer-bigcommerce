@@ -41,7 +41,7 @@ const getPlanAndCheckLimit = async (store) => {
 
         const aggregateResult = await JobHistory.aggregate([
             { $match: 
-                { storeHash: store.store_hash, status: {$in: ["completed", "failed"]}, startedAt : {$gte : cycleStart , $lt : cycleEnd} }
+                { storeHash: store.store_hash, status: {$in: ["completed", "failed", "pending"]}, startedAt : {$gte : cycleStart , $lt : cycleEnd} }
             },
             { $group:
                  { _id: "$storeHash", totalItems: { $sum: "$processedItems" } }  

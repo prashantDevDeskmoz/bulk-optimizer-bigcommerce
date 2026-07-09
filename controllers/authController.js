@@ -97,7 +97,7 @@ const handleAuthCallback = async (req, res) => {
     await subscribeWebhooksOnInstall(storeHash, access_token);
 
     // 8. Send install email to the store owner
-    await sendInstallNotificationEmail(storeHash, user?.email);
+    await sendInstallNotificationEmail(storeHash, user?.email, storeData?.name);
 
     // 9. App session for the frontend (same shape as load flow; OAuth gives `user`, not JWT payload)
     const sessionToken = buildSessionToken({

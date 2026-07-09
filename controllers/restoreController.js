@@ -67,11 +67,12 @@ const restoreItems = async (req, res) => {
 
     if(target === "alt" && itemType === "product") {
       const images = item.fields.images;
-      for(const image of images) {
-        const response = await axios.put(updateImageUrl(req.storeHash, itemId, image.imageId), {
+
+      const results = await Promise.allSettled(images.map(async (image) => {
+        return axios.put(updateImageUrl(req.storeHash, itemId, image.imageId), {
           description: image.altText,
         }, { headers: { "X-Auth-Token": store.access_token, "Content-Type": "application/json" } });
-      }
+      }));
     }
     else if(itemType === "product") {
       const response = await axios.put(batchUpdateProductsUrl(req.storeHash), [{
@@ -179,11 +180,20 @@ const bulkRestore = async (req, res) => {
       });
     }
 
-    const bullJob = await queueManager.addJob(QUEUE_NAMES.restore, {
+    const restoreJobId = `restore-${sourceJob.target}-${Date.now()}-${req.storeHash}`;
+    const jobOptions = { jobId: restoreJobId };
+    const jobData = {
       sourceJobId: jobId,
       accessToken: store.access_token,
       storeHash: req.storeHash,
-    });
+    };
+
+    let bullJob = null;
+    if (sourceJob.target === "alt") {
+      bullJob = await queueManager.addJob(QUEUE_NAMES.restoreImages, jobData, jobOptions);
+    } else {
+      bullJob = await queueManager.addJob(QUEUE_NAMES.restore, jobData, jobOptions);
+    }
 
     await RestoreHistory.create({
       restoreJobId: bullJob.id,

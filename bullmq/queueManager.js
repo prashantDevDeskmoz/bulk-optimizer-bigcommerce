@@ -2,11 +2,12 @@ const { Queue } = require("bullmq");
 const redis = require("../redis");
 
 const QUEUE_NAMES = {
-  products:         "bulk-optimized-products",
+  products:         "bulk-optimized-products-v2",
   categories:       "bulk-optimized-categories",
   brands:           "bulk-optimized-brands",
-  images:           "bulk-optimized-images",
+  images:           "bulk-optimized-images-v2",
   restore:          "bulk-restore",
+  restoreImages:    "bulk-restore-images",
 };
 
 class QueueManager {
@@ -26,6 +27,7 @@ class QueueManager {
       [QUEUE_NAMES.brands]:             new Queue(QUEUE_NAMES.brands, queueConfig),
       [QUEUE_NAMES.images]:             new Queue(QUEUE_NAMES.images, queueConfig),
       [QUEUE_NAMES.restore]:            new Queue(QUEUE_NAMES.restore, queueConfig),
+      [QUEUE_NAMES.restoreImages]:      new Queue(QUEUE_NAMES.restoreImages, queueConfig),
     };
   }
 

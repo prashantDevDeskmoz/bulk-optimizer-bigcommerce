@@ -13,16 +13,9 @@ const {
   productChannelAssignmentsUrl,
 } = require("../utils/bcApi");
 
-function timingSafeEqual(a, b) {
-  try {
-    const ba = Buffer.from(String(a), "utf8");
-    const bb = Buffer.from(String(b), "utf8");
-    if (ba.length !== bb.length) return false;
-    return crypto.timingSafeEqual(ba, bb);
-  } catch {
-    return false;
-  }
-}
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}     
 
 async function updateCategoryCreated({
   target,
@@ -50,7 +43,7 @@ async function updateCategoryCreated({
       const dict = {
         "[[category name]]": category?.name ?? "",
       };
-      let out = tpl ?? "";
+      let out = tpl.trim() ?? "";
       for (const [token, value] of Object.entries(dict)) {
         out = out.replaceAll(token, value);
       }
@@ -66,13 +59,19 @@ async function updateCategoryCreated({
       },
     ];
 
-    await axios.put(batchUpdateCategoriesUrl(storeHash), updates, {
+    console.log("[updateCategoryCreated]: updates:::::::::::::::::::::::::::::::::", updates);
+
+    const response = await axios.put(batchUpdateCategoriesUrl(storeHash), updates, {
       headers: {
         "X-Auth-Token": accessToken,
         Accept: "application/json",
         "Content-Type": "application/json",
       },
     });
+
+    await sleep(1000);
+
+    console.log("[updateCategoryCreated]: response:::::::::::::::::::::::::::::::::", response.data);
 
     await WebhookHistory.findByIdAndUpdate(webhookHistory._id, {
       status: "done",
@@ -107,7 +106,7 @@ function renderProductTemplate(template, product) {
     "[[condition]]": product?.condition ?? "",
     "[[store name]]": "",
   };
-  let out = template ?? "";
+  let out = template.trim() ?? "";
   for (const [token, value] of Object.entries(dict)) {
     out = out.replaceAll(token, value);
   }
@@ -169,6 +168,8 @@ async function updateProductCreated({
       },
     });
 
+    await sleep(1000);
+
     await WebhookHistory.findByIdAndUpdate(webhookHistory._id, {
       status: "done",
       itemName: productData?.name ?? "",
@@ -208,6 +209,7 @@ const handleProductCreatedWebhook = async (req, res) => {
       return res.status(404).json({ status: false, message: "Store not found" });
     }
     if(store.plan === "free") {
+      console.log("[handleProductCreatedWebhook]: Free plan does not support webhooks");
       return res.status(200).json({ status: true, message: "Free plan does not support webhooks" });
     }
 
@@ -224,10 +226,8 @@ const handleProductCreatedWebhook = async (req, res) => {
       "Content-Type": "application/json",
     };
 
-    const { data: productRes } = await axios.get(
-      getProductUrl(storeHash, productId),
-      { headers },
-    );
+    const { data: productRes } = await axios.get(getProductUrl(storeHash, productId), { headers });
+
     const productData = productRes?.data;
     if (!productData?.id) {
       throw new Error("Product not found in catalog");
@@ -331,6 +331,7 @@ const handleCategoryCreatedWebhook = async (req, res) => {
       return res.status(404).json({ status: false, message: "Store not found" });
     }
     if(store.plan === "free") {
+      console.log("[handleCategoryCreatedWebhook]: Free plan does not support webhooks");
       return res.status(200).json({ status: true, message: "Free plan does not support webhooks" });
     }
 

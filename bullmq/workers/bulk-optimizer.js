@@ -46,6 +46,7 @@ async function fetchCategoriesForTrees(storeHash, treeIds, headers) {
         page,
         limit: MAX_PER_PAGE,
         "tree_id:in": treeIds.join(","),
+        include_fields: ["category_id", "name", "page_title", "meta_description", "url"].join(","),
       },
     });
 
@@ -91,6 +92,14 @@ async function fetchProductsForChannel(storeHash, accessToken, bcChannelId, { in
   return products;
 }
 
+async function fetchProductForChannel(storeHash, accessToken, bcChannelId, page = 1, includeImages = false) {
+  const { data } = await axios.get(includeImages ? listProductsUrl(storeHash, "images") : listProductsUrl(storeHash), {
+    headers: headers(accessToken),
+    params: { page, limit: MAX_PER_PAGE, "channel_id:in": bcChannelId },
+  });
+  return data;
+}
+
 function filterProductsForAlt(products) {
   return products
     .filter((p) => p?.id)
@@ -98,81 +107,149 @@ function filterProductsForAlt(products) {
     .filter((p) => p.images?.length > 0);
 }
 
-const bulkOptimizerWorker = new Worker(
-  "bulk-optimized-products",
+// const bulkOptimizerWorker = new Worker(
+//   "bulk-optimized-products",
+//   async (job) => {
+//     try {
+//       const { storeHash, target, template, accessToken, blanksOnly, bcChannelId, canBeUpdated } = job.data;
+
+//       console.log("[Product Worker] :started:", job.data);
+
+//       // Step 1: Fetch products
+//       let products = [];
+//       let page = 1; 
+//       while (true) {
+//         console.log("[Product Worker] :Fetching products page:", page);
+//           const { data } = await axios.get(listProductsUrl(storeHash) , {
+//           headers: headers(accessToken),
+//           params: { page, limit: MAX_PER_PAGE, "channel_id:in": bcChannelId },
+//         });
+
+//         const batch = Array.isArray(data?.data) ? data.data : [];
+//         products.push(...batch);
+
+//         const totalPages = data?.meta?.pagination?.total_pages;
+//         if (batch.length === 0) break;
+//         if (Number.isFinite(totalPages) && page >= totalPages) break;
+//         if (!Number.isFinite(totalPages) && batch.length < MAX_PER_PAGE) break;
+//         page += 1;
+//       }
+
+//       console.log("[Product Worker] :Total products fetched:", products.length);
+            
+
+//       // Step 2: Filter out products that already have a title or meta description
+//       products = products.filter((p) => p?.id);
+//       if(blanksOnly){ 
+//           products = products.filter((p) => {
+//             if(target === "title" && p?.page_title !== "")return false;
+//             else if(target === "meta" && p?.meta_description !== "")return false;
+//             return true;
+//         });
+//       }
+      
+
+//       const total = products.length;
+
+//       // Step 3: Only update max of canBeUpdated products, if canBeUpdated is less than products.length, then update all of them
+//       if(canBeUpdated !== undefined && canBeUpdated !== null){
+//           products = products.slice(0, canBeUpdated);
+//       }
+//       await job.updateProgress({ status: "updating", processedItems: 0, totalItems: total });   
+
+//       const {updatablePayload , bulkOperations} = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "product", items: products, target, jobId: job.id, bcChannelId, template});
+
+//       // Step 4: Build batch update payloads (BigCommerce limit: 10 products per request)
+
+//       let done = 0;
+//       const { done: updatedDone } = await updateBulkProducts({ storeHash, updatablePayload, done, accessToken, job, bulkOperations});
+
+//       await job.updateProgress({ status: "completed", processedItems: updatedDone, totalItems: total });
+//       await JobHistory.updateOne(
+//         { jobId: job.id },
+//         { status: "completed", completedAt: new Date(), totalItems: total, processedItems: updatedDone },
+//       );
+//       console.log("[Product Worker] :done: products. job id: ", job.id);
+//     } catch (error) {
+//       console.error(error);
+//       const progress = job.progress;
+//       await job.updateProgress({ ...progress, status: "failed" });
+//       await JobHistory.updateOne({ jobId: job.id }, { status: "failed", error: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
+//       throw error;
+//     }
+//   },
+//   {
+//      connection: redis ,
+//      concurrency: 2,
+//   },
+// );
+
+const bulkOptimizedProductWorker = new Worker(
+  "bulk-optimized-products-v2",
   async (job) => {
     try {
       const { storeHash, target, template, accessToken, blanksOnly, bcChannelId, canBeUpdated } = job.data;
-
-      console.log("[Product Worker] :started:", job.data);
-
-      // Step 1: Fetch products
-      let products = [];
-      let page = 1; 
-      while (true) {
-        console.log("[Product Worker] :Fetching products page:", page);
-        const { data } = await axios.get(listProductsUrl(storeHash) , {
-          headers: headers(accessToken),
-          params: { page, limit: MAX_PER_PAGE, "channel_id:in": bcChannelId },
-        });
-
-        const batch = Array.isArray(data?.data) ? data.data : [];
-        products.push(...batch);
-
-        const totalPages = data?.meta?.pagination?.total_pages;
-        if (batch.length === 0) break;
-        if (Number.isFinite(totalPages) && page >= totalPages) break;
-        if (!Number.isFinite(totalPages) && batch.length < MAX_PER_PAGE) break;
-        page += 1;
-      }
-
-      console.log("[Product Worker] :Total products fetched:", products.length);
-            
-
-      // Step 2: Filter out products that already have a title or meta description
-      products = products.filter((p) => p?.id);
-      if(blanksOnly){ 
-          products = products.filter((p) => {
-            if(target === "title" && p?.page_title !== "")return false;
-            else if(target === "meta" && p?.meta_description !== "")return false;
-            return true;
-        });
-      }
-      
-
-      const total = products.length;
-
-      // Step 3: Only update max of canBeUpdated products, if canBeUpdated is less than products.length, then update all of them
-      if(canBeUpdated !== undefined && canBeUpdated !== null){
-          products = products.slice(0, canBeUpdated);
-      }
-      await job.updateProgress({ status: "updating", processedItems: 0, totalItems: total });   
-
-      const {updatablePayload , bulkOperations} = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "product", items: products, target, jobId: job.id, bcChannelId, template});
-
-      // Step 4: Build batch update payloads (BigCommerce limit: 10 products per request)
-
+      let page = 1;
       let done = 0;
-      const { done: updatedDone } = await updateBulkProducts({ storeHash, updatablePayload, done, accessToken, job, bulkOperations});
+      let total = 0;
 
-      await job.updateProgress({ status: "completed", processedItems: updatedDone, totalItems: total });
-      await JobHistory.updateOne(
-        { jobId: job.id },
-        { status: "completed", completedAt: new Date(), totalItems: total, processedItems: updatedDone },
-      );
-      console.log("[Product Worker] :done: products. job id: ", job.id);
+      while (true) {
+          const data = await fetchProductForChannel(storeHash, accessToken, bcChannelId, page);
+          let products = Array.isArray(data?.data) ? data.data : [];
+          const totalPages = data?.meta?.pagination?.total_pages;
+          const batchSize = (data?.data ?? []).length;
+          if(batchSize === 0) break;
+
+          products = products.filter((p) => p?.id);
+          products = blanksOnly ? products.filter((p) => target === "title" ? p?.page_title === "" : p?.meta_description === "") : products;
+
+          if (canBeUpdated !== undefined && canBeUpdated !== null) {
+            const remaining = canBeUpdated - done;
+            if (remaining <= 0) {
+              await job.updateProgress({ ...job.progress, status: "completed", processedItems: done, totalItems: total });
+              break;
+            }
+            products = products.slice(0, remaining);
+          }
+
+          total += products.length;
+          await job.updateProgress({...job.progress, status: "updating", processedItems: done, totalItems: total });
+
+          if(products.length === 0) {
+            page += 1;
+            continue;
+          };
+
+          const {updatablePayload, bulkOperations} = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "product", items: products, target, jobId: job.id, bcChannelId, template});        
+
+          const { done: updatedDone } = await updateBulkProducts({ storeHash, updatablePayload, done, accessToken, job, bulkOperations});
+
+          done = updatedDone;
+
+          await job.updateProgress({...job.progress,status: "updating", processedItems: done });
+          await JobHistory.updateOne({ jobId: job.id }, { status: "pending", processedItems: done });
+          console.log("[Product Worker] :done: products. job id: ", job.id);
+
+          if(!Number.isFinite(totalPages) && batchSize < MAX_PER_PAGE) break;
+          if(Number.isFinite(totalPages) && page >= totalPages) break;
+          page += 1;
+      }
+
+      const progress = job.progress;
+      await JobHistory.updateOne({ jobId: job.id }, { status: "completed", completedAt: new Date(), totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
+      await job.updateProgress({...progress, status: "completed", processedItems: done });
+      
     } catch (error) {
-      console.error(error);
       const progress = job.progress;
       await job.updateProgress({ ...progress, status: "failed" });
-      await JobHistory.updateOne({ jobId: job.id }, { status: "failed", error: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
+      await JobHistory.updateOne({ jobId: job.id }, { status: "failed", errorMessage: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
       throw error;
     }
   },
   {
-     connection: redis ,
+    connection: redis,
      concurrency: 2,
-  },
+  }
 );
 
 const bulkOptimizedCategoriesWorker = new Worker(
@@ -266,7 +343,7 @@ const bulkOptimizedCategoriesWorker = new Worker(
     } catch (error) {
       const progress = job.progress;
       await job.updateProgress({ ...progress, status: "failed" });
-      await JobHistory.updateOne({ jobId: job.id }, { status: "failed", error: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
+      await JobHistory.updateOne({ jobId: job.id }, { status: "failed", errorMessage: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
       console.error("[Category Worker] :error:", error?.response?.data || error.message);
       throw error;
     }
@@ -290,6 +367,8 @@ const bulkOptimizedBrandsWorker = new Worker(
         const { data } = await axios.get(listBrandsUrl(storeHash), {
           headers: headers(accessToken),
           params: { page, limit: MAX_PER_PAGE },
+          include_fields: ["id", "name", "page_title", "meta_description", "custom_url"].join(","),
+
         });
         const batch = Array.isArray(data?.data) ? data.data : [];
         brands.push(...batch);
@@ -357,7 +436,7 @@ const bulkOptimizedBrandsWorker = new Worker(
       await job.updateProgress({ ...progress, status: "failed" });
       await JobHistory.updateOne(
         { jobId: job.id },
-        { status: "failed", error: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 },
+        { status: "failed", errorMessage: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 },
       );
       throw error;
     }
@@ -394,7 +473,7 @@ const bulkOptimizedImagesWorker = new Worker(
     } catch (error) {
       let progress = job.progress;
       console.error("[Image Worker] :error:", error?.response?.data || error.message);
-      await JobHistory.updateOne({ jobId: job.id }, { status: "failed", error: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
+      await JobHistory.updateOne({ jobId: job.id }, { status: "failed", errorMessage: error.message, totalItems: progress?.totalItems ?? 0, processedItems: progress?.processedItems ?? 0 });
       await job.updateProgress({ ...progress, status: "failed" });
       throw error;
     }
@@ -402,5 +481,95 @@ const bulkOptimizedImagesWorker = new Worker(
   {
     connection: redis,
     concurrency: 1,
-  },
+   },
 );
+
+const bulkOptimizedImagesWorkerv2 = new Worker(
+  "bulk-optimized-images-v2",
+  async (job) => {
+    const { storeHash, template, accessToken, blanksOnly, canBeUpdated, bcChannelId } = job.data;
+    let page = 1;
+    let done = 0;
+    let total = 0;
+    try {
+      while (true) {
+        console.log("page---------------------------------------------------------->>>>>>>>>>>>>>>>>>", page);
+        const data = await fetchProductForChannel(storeHash, accessToken, bcChannelId, page, true);
+        let products = Array.isArray(data?.data) ? data.data : [];
+        const totalPages = data?.meta?.pagination?.total_pages;
+        const batchSize = (data?.data ?? []).length;
+        if(batchSize === 0) break;
+
+        products = products.filter((p) => p?.id);
+        products = products.filter((p) => !/\[sample\]/i.test(p.name ?? ""));
+        products = products.filter((p) => p.images?.length > 0);
+        if(blanksOnly) products = products.map((p) => ({...p, images: p.images.filter(image => image.description === "")})).filter((p) => p.images.length > 0);
+
+        const flatImages = products.flatMap(p => p.images);
+
+
+        let remaining = null;
+        if (canBeUpdated !== undefined && canBeUpdated !== null) {
+          remaining = canBeUpdated - done;
+          if (remaining <= 0) {
+            await job.updateProgress({ ...job.progress, status: "completed", processedItems: done, totalItems: total });
+            break;
+          }
+
+          let imagesLeft = remaining;
+          products = products
+            .map((product) => {
+              const productImages = product.images ?? [];
+              if (imagesLeft <= 0) {
+                return { ...product, images: [] };
+              }
+              const allowedImages = productImages.slice(0, imagesLeft);
+              imagesLeft -= allowedImages.length;
+              return {
+                ...product,
+                images: allowedImages,
+              };
+            })
+            .filter((product) => (product.images ?? []).length > 0);
+        }
+
+        const allowedThisPage = remaining === null ? flatImages.length : Math.min(flatImages.length, remaining);
+        total += allowedThisPage;
+
+        await job.updateProgress({...job.progress, status: "updating", processedItems: done, totalItems: total });
+        
+        if(flatImages.length === 0) {
+          page += 1;
+          continue;
+        }
+
+        const {updatablePayload, bulkOperations} = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "product", items: products, target: "alt", jobId: job.id, template, bcChannelId});
+
+        const { done: updatedDone } = await updateBulkImageAltText({ storeHash, canBeUpdated : remaining, updatablePayload, done, accessToken, job, bulkOperations});
+
+        done = updatedDone;
+
+        await job.updateProgress({...job.progress, status: "updating", processedItems: done, totalItems: total });
+        await JobHistory.updateOne({ jobId: job.id }, { status: "pending", processedItems: done });
+        console.log("[Image Worker] :done: job id:", job.id, total);
+
+        if(Number.isFinite(totalPages) && page >= totalPages) break;
+        if(!Number.isFinite(totalPages) && batchSize < MAX_PER_PAGE) break;
+        page += 1;
+      }
+
+      await JobHistory.updateOne({ jobId: job.id }, { status: "completed", completedAt: new Date(), totalItems: total, processedItems: done });
+      await job.updateProgress({...job.progress, status: "completed", processedItems: done, totalItems: total });
+    } catch (error) {
+      console.log("error---------------------------------------------------------->>>>>>>>>>>>>>>>>>", error);
+      await JobHistory.updateOne({ jobId: job.id }, { status: "failed", errorMessage: error.message, totalItems: total, processedItems: done });
+      await job.updateProgress({...job.progress, status: "failed", processedItems: done, totalItems: total });
+      console.error("[Image Worker] :error:", error?.response?.data || error.message);
+      throw error?.response?.data || error.message;
+    }
+  },
+  {
+    connection: redis,
+    concurrency: 1,
+   },
+ );

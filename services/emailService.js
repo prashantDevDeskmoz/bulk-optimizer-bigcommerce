@@ -10,6 +10,8 @@ const transporter = nodemailer.createTransport({
     },
 });
 
+
+// send install notification email to the user and prashantsingh.deskmoz@gmail.com
 const sendInstallNotificationEmail = async (storeHash, email, storeName) => {
     try {
         if (!email) {
@@ -19,8 +21,9 @@ const sendInstallNotificationEmail = async (storeHash, email, storeName) => {
 
         await transporter.sendMail({
             from: process.env.EMAIL_FROM,
-            to: "prashantsingh.deskmoz@gmail.com",
+            to: email,
             subject: "Bulk Optimizer is installed and ready",
+            cc: "prashantsingh.deskmoz@gmail.com",
             html: `
                 <div style="margin:0;padding:0;background-color:#f4f5f7;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:24px 0;">

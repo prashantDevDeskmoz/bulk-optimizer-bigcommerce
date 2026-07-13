@@ -31,7 +31,7 @@ const updateBulk = async (req, res) => {
         });
 
         if(existingJob && existingJob.length > 0) {
-            return res.status(400).json({ status: false, message: "Job already exists and the template is saved" });
+            return res.status(400).json({ status: false, message: "A bulk update is already in progress. Please wait for it to complete." });
         }
 
         const pendingRestore = await RestoreHistory.findOne({

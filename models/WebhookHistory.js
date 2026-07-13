@@ -33,6 +33,22 @@ const webhookHistorySchema = new mongoose.Schema({
         enum: ["pending", "fetching", "updating", "done", "failed"],
         default: "pending",
     },
+    jobId : {
+        type: String,
+        default: null,
+    },
+    resourceId : {
+        type: Number,
+        default: null,
+    },
+    totalItems : {
+        type: Number,
+        default: 0,
+    },
+    processedItems : {
+        type: Number,
+        default: 0,
+    },
     startedAt : {
         type: Date,
         default: Date.now,

@@ -8,6 +8,7 @@ mongoose.connect(process.env.MONGO_URI)
     console.log("Workers: MongoDB connected");
     require("./bulk-optimizer");  // registers product/category/brand/image workers
     require("./restore");         // registers restore worker
+    require("./webhook");         // registers webhook cruise-control worker
     console.log("All workers started");
   })
   .catch((err) => {

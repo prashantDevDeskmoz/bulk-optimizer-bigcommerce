@@ -745,6 +745,7 @@ module.exports = {
     NORMAL_THROTTLE_MS,
     PRODUCT_BATCH_LIMIT,
     RATE_LIMIT_LOW_THRESHOLD,
+    putWithRetry,
     updateSnapshotAndReturnUpdatablePayload,
     updateBulkCategories,
     updateBulkBrands,

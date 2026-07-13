@@ -1,6 +1,7 @@
 const Store = require("../models/Store");
 const {QueueManager, QUEUE_NAMES} = require("../bullmq/queueManager");
 const JobHistory = require("../models/JobHistory");
+const RestoreHistory = require("../models/RestoreHistory");
 const Channel = require("../models/Channel");
 const Template = require("../models/Template");
 const queueManager = new QueueManager();
@@ -31,6 +32,19 @@ const updateBulk = async (req, res) => {
 
         if(existingJob && existingJob.length > 0) {
             return res.status(400).json({ status: false, message: "Job already exists and the template is saved" });
+        }
+
+        const pendingRestore = await RestoreHistory.findOne({
+            storeHash: req.storeHash,
+            resource: applyTo,
+            target,
+            status: "pending",
+        }).lean();
+        if (pendingRestore) {
+            return res.status(400).json({
+                status: false,
+                message: "A restore is in progress for this item type and field. Wait for it to finish before running bulk update.",
+            });
         }
 
         const { planLimitReached, canBeUpdated } = await getPlanAndCheckLimit(store);

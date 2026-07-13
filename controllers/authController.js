@@ -10,7 +10,7 @@ const {
 } = require("../utils/sessionJwt");
 const { storeUrl } = require("../utils/bcApi");
 const { sendInstallNotificationEmail } = require("../services/emailService");
-const { subscribeWebhooksOnInstall } = require("../utils/webhooks");
+const { subscribeWebhooksOnInstall, unsubscribeWebhooksOnUninstall } = require("../utils/webhooks");
 const { syncStoreChannels } = require("../utils/channelSync");
 const handleAuthCallback = async (req, res) => {
   try {
@@ -225,8 +225,36 @@ const createSessionFromLoad = async (req, res) => {
 
 const handleUnInstall = async (req, res) => {
   try {
-    const storeHash = req.params.storeHash;
-    await Store.findOneAndUpdate({store_hash: storeHash}, {is_active: false});
+    console.log("handleUnInstall--------------------------------", req.params, req.query);
+
+    const {signed_payload_jwt} = req.query;
+    if (!signed_payload_jwt || typeof signed_payload_jwt !== "string") {
+      return res.status(400).json({ status: false, message: "Missing signed_payload_jwt" });
+    }
+
+    let bcPayload;
+    try {
+      bcPayload = verifySignedPayloadJwt(signed_payload_jwt);
+    } catch {
+      return res.status(401).json({ status: false, message: "Invalid or expired signed_payload_jwt" });
+    }
+
+    const storeHash = storeHashFromSub(bcPayload.sub);
+    if (!storeHash) {
+      return res.status(400).json({ status: false, message: "Invalid store subject in token" });
+    }
+
+    const store = await Store.findByHash(storeHash);
+    if (!store) {
+      console.log("Store not found");
+      return res.status(404).json({status: false, message: "Store not found"});
+    }
+
+    await store.updateOne({is_active: false});
+
+    console.log("store.access_token", store.access_token);
+
+    await unsubscribeWebhooksOnUninstall(storeHash, store.access_token);
 
     res.status(200).json({status: true, message: "Store uninstalled successfully"});
   } catch (error) {

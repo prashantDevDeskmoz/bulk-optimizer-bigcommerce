@@ -22,9 +22,12 @@ app.use("/", apiRouter);
 
 const mongoUri = process.env.MONGO_URI;
 
+const { ensureDefaultPlans } = require("./services/planService");
+
 mongoose.connect(mongoUri)
-  .then(() => {
+  .then(async () => {
     console.log("🔗 Connected to MongoDB");
+    await ensureDefaultPlans();
     app.listen(PORT, () => {
       console.log(`🚀 BigCommerce App Server Started on port ${PORT}`);
     });

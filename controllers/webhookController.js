@@ -204,9 +204,9 @@ const handleProductCreatedWebhook = async (req, res) => {
     const productId = payload.data.id;
 
     const store = await Store.findByHash(storeHash);
-    if (!store) {
+    if (!store || !store.is_active) {
       console.error("[handleProductCreatedWebhook]: Store not found");
-      return res.status(404).json({ status: false, message: "Store not found" });
+      return res.status(404).json({ status: false, message: "Store not found or not active" });
     }
     if(store.plan === "free") {
       console.log("[handleProductCreatedWebhook]: Free plan does not support webhooks");
@@ -326,9 +326,9 @@ const handleCategoryCreatedWebhook = async (req, res) => {
     const categoryId = payload.data.id;
 
     const store = await Store.findByHash(storeHash);
-    if (!store) {
+    if (!store || !store.is_active) {
       console.error("[handleCategoryCreatedWebhook]: Store not found");
-      return res.status(404).json({ status: false, message: "Store not found" });
+      return res.status(404).json({ status: false, message: "Store not found or not active" });
     }
     if(store.plan === "free") {
       console.log("[handleCategoryCreatedWebhook]: Free plan does not support webhooks");

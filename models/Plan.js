@@ -11,7 +11,7 @@ const planSchema = new mongoose.Schema({
     },
     itemLimit: {
         type: Number,
-        required: true,
+        default: null,  // null = unlimited
     },
     period: {
         type: String,

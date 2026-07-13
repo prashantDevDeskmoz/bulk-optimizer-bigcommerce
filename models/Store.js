@@ -61,7 +61,7 @@ const storeSchema = new mongoose.Schema(
       },
       plan: {
         type: String,
-        enum: ["free", "paid"],
+        enum: ["free", "pro"],
         default: "free",
       },
       trialDaysRemaining: {

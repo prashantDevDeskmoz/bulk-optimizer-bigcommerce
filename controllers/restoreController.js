@@ -180,6 +180,19 @@ const bulkRestore = async (req, res) => {
       });
     }
 
+    const pendingBulk = await JobHistory.findOne({
+      storeHash: req.storeHash,
+      resource: sourceJob.resource,
+      target: sourceJob.target,
+      status: { $in: ["pending", "fetching", "updating"] },
+    }).lean();
+    if (pendingBulk) {
+      return res.status(400).json({
+        status: false,
+        message: "A bulk update is in progress for this item type and field. Wait for it to finish before restoring.",
+      });
+    }
+
     const restoreJobId = `restore-${sourceJob.target}-${Date.now()}-${req.storeHash}`;
     const jobOptions = { jobId: restoreJobId };
     const jobData = {

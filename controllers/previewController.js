@@ -101,8 +101,6 @@ const getChannelPreviewSamples = async (req, res) => {
       product = data.data.find(product => product.page_title != "" && product.meta_description != "");
       productImage = data.data.find(product => product.images && product.images.length > 0 && product.images.some(image => image.description && image.description != "" ));
 
-      console.log("productImage", productImage);
-
       const rows = Array.isArray(data?.data) ? data.data : [];
       product = product ?? rows[0] ?? null;
       productImage = productImage ?? rows[0] ?? null;

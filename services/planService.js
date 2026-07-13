@@ -23,7 +23,7 @@ const getPlanAndCheckLimit = async (store) => {
 
         const baseDate = (store.plan === "free") 
           ? new Date(store.createdAt) 
-          : new Date(store.planPurchasedAt);
+          : new Date(store.planPurchasedAt || store.createdAt);
 
         const now = new Date(); // 7 march 2026
       
@@ -51,8 +51,12 @@ const getPlanAndCheckLimit = async (store) => {
 
         const totalItemsProcessed = aggregateResult[0]?.totalItems || 0;
 
+        if (plan.itemLimit == null) {
+            return { planLimitReached: false, usage: totalItemsProcessed, canBeUpdated: null, planLimit: null };
+        }
+
         const planLimitReached = totalItemsProcessed >= plan.itemLimit;
-        const canBeUpdated = plan.itemLimit - totalItemsProcessed ;
+        const canBeUpdated = Math.max(0, plan.itemLimit - totalItemsProcessed);
 
         return { planLimitReached, usage: totalItemsProcessed, canBeUpdated, planLimit: plan.itemLimit };
 
@@ -62,6 +66,18 @@ const getPlanAndCheckLimit = async (store) => {
     }
 }
 
+const ensureDefaultPlans = async () => {
+    await Plan.find({name: {$in: ["free", "pro"]}}).then(async (plans) => {
+        if(plans.length === 0) {
+            await Plan.createMany([
+                {name: "free", description: "Free plan", itemLimit: 100, period: "monthly", price: 0},
+                {name: "pro", description: "Pro plan", itemLimit: null, period: "monthly", price: 20},
+            ]);
+        }
+    });
+};
+
 module.exports = {
     getPlanAndCheckLimit,
+    ensureDefaultPlans,
 }

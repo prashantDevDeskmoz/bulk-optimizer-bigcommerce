@@ -65,7 +65,7 @@ router.get("/store", requireAppSession, async (req, res) => {
     try {
       const store = await Store.findByHash(req.storeHash);
       if (!store) {return res.status(404).json({ status: false, message: "Store not found" });}
-      const channel = await Channel.find({ store: store._id });
+      const channel = await Channel.find({ storeId: store._id });
       if (!channel) {return res.status(404).json({ status: false, message: "Channel not found" });}
   
       const headers = {

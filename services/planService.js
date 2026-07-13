@@ -69,7 +69,7 @@ const getPlanAndCheckLimit = async (store) => {
 const ensureDefaultPlans = async () => {
     await Plan.find({name: {$in: ["free", "pro"]}}).then(async (plans) => {
         if(plans.length === 0) {
-            await Plan.createMany([
+            await Plan.insertMany([
                 {name: "free", description: "Free plan", itemLimit: 100, period: "monthly", price: 0},
                 {name: "pro", description: "Pro plan", itemLimit: null, period: "monthly", price: 20},
             ]);

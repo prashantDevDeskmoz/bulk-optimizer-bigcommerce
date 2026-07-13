@@ -1,6 +1,7 @@
 const { Router } = require("express");
 const { requireAppSession } = require("../middleware/requireAppSession");
 const Store = require("../models/Store");
+const Plan = require("../models/Plan");
 
 const router = Router();
 
@@ -26,16 +27,18 @@ async function getPaypalAccessToken() {
   return data.access_token;
 }
 
+async function getProPlanAmount() {
+  const plan = await Plan.findOne({ name: "pro" });
+  if (!plan) {
+    throw new Error("Pro plan not configured");
+  }
+  return Number(plan.price).toFixed(2);
+}
 
 router.post("/create-order", requireAppSession, async (req, res) => {
     try {
-        console.log("req.body", req.body);
         const accessToken = await getPaypalAccessToken();
-
-        console.log("accessToken", accessToken);
-        
-        // Calculate your cart total on the backend to prevent tampering!
-        const totalAmount = req.body.amount; 
+        const totalAmount = await getProPlanAmount();
     
         const response = await fetch(`${BASE_URL}/v2/checkout/orders`, {
           method: "POST",
@@ -57,7 +60,7 @@ router.post("/create-order", requireAppSession, async (req, res) => {
         });
     
         const data = await response.json();
-        res.status(response.status).json(data); // Sends the Order ID back to Next.js
+        res.status(response.status).json(data);
       } catch (error) {
         console.error("Error creating PayPal order:", error);
         res.status(500).json({ error: error.message });
@@ -69,7 +72,6 @@ router.post("/capture-order", requireAppSession, async (req, res) => {
     const { orderID } = req.body;
     const storeHash = req.storeHash;
 
-    console.log("storeHash", storeHash);
     const store = await Store.findOne({store_hash: storeHash});
     if (!store) {
       return res.status(400).json({ success: false, message: "Store not found" });
@@ -78,9 +80,9 @@ router.post("/capture-order", requireAppSession, async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing orderID" });
     }
 
+    const expectedAmount = await getProPlanAmount();
     const accessToken = await getPaypalAccessToken();
 
-    // Call PayPal to capture the funds
     const response = await fetch(`${BASE_URL}/v2/checkout/orders/${orderID}/capture`, {
       method: "POST",
       headers: {
@@ -91,23 +93,30 @@ router.post("/capture-order", requireAppSession, async (req, res) => {
 
     const data = await response.json();
 
-    // PayPal returns a 201 Created or 200 OK status on a successful capture
-    if (response.status === 200 || response.status === 201) {
-      if (data.status === "COMPLETED") {
-        
-        Store.findOneAndUpdate({store_hash: storeHash}, {
-            plan: "pro",
-            planPurchasedAt: new Date(),
-        }).then((result) => {
-          console.log("result", result);
-          return res.status(200).json({ success: true, message: "Payment captured successfully", data });
-        }).catch((error) => {
-          console.error("Error updating store:", error);
-          return res.status(500).json({ success: false, error: error.message });
-        });  
-      }
+    if (response.status !== 200 && response.status !== 201) {
+      return res.status(response.status).json({ success: false, message: "Payment capture failed", data });
     }
 
+    if (data.status !== "COMPLETED") {
+      return res.status(400).json({ success: false, message: "Payment not completed", data });
+    }
+
+    const paid =
+      data?.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value;
+
+    if (paid !== expectedAmount) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment amount mismatch",
+      });
+    }
+
+    await Store.findOneAndUpdate(
+      { store_hash: storeHash },
+      { plan: "pro", planPurchasedAt: new Date() },
+    );
+
+    return res.status(200).json({ success: true, message: "Payment captured successfully", data });
   } catch (error) {
     console.error("Error capturing PayPal order:", error);
     return res.status(500).json({ success: false, error: error.message });

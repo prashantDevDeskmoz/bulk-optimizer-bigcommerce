@@ -25,7 +25,7 @@ const getWebhookHistories = async (req, res) => {
 
     const filter = { storeId: store._id, target : { $ne: null } };
 
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 100);
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const skip = (page - 1) * limit;
 

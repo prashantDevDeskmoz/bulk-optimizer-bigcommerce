@@ -12,6 +12,7 @@ const { storeUrl } = require("../utils/bcApi");
 const { sendInstallNotificationEmail } = require("../services/emailService");
 const { subscribeWebhooksOnInstall, unsubscribeWebhooksOnUninstall } = require("../utils/webhooks");
 const { syncStoreChannels } = require("../utils/channelSync");
+
 const handleAuthCallback = async (req, res) => {
   try {
     console.log("Callback received:", req.query);

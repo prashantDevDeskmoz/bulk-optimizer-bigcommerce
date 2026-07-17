@@ -21,6 +21,10 @@ const planSchema = new mongoose.Schema({
         type: Number,
         required: true,
     },
+    paypalPlanId: {
+        type: String,
+        default: null,
+    },
 });
 
 const Plan = mongoose.model("Plan", planSchema);

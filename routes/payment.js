@@ -1,4 +1,4 @@
-const { Router } = require("express");
+const { Router, raw } = require("express");
 const { requireAppSession } = require("../middleware/requireAppSession");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
@@ -123,4 +123,110 @@ router.post("/capture-order", requireAppSession, async (req, res) => {
   }
 });
 
-module.exports = router;
+// Must receive RAW body (not JSON-parsed) for signature verification to work.
+
+router.post("/webhook", raw({ type: "application/json" }), async (req, res) => {
+  try {
+    // express.json() already parsed the body, so req.body is an object here
+    console.log(req.body);
+    // return res.status(200).json({ received: true });
+    const event = req.body;
+    const accessToken = await getPaypalAccessToken();
+
+    const verifyRes = await fetch(`${BASE_URL}/v1/notifications/verify-webhook-signature`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        auth_algo: req.headers["paypal-auth-algo"],
+        cert_url: req.headers["paypal-cert-url"],
+        transmission_id: req.headers["paypal-transmission-id"],
+        transmission_sig: req.headers["paypal-transmission-sig"],
+        transmission_time: req.headers["paypal-transmission-time"],
+        webhook_id: process.env.PAYPAL_WEBHOOK_ID,
+        webhook_event: event,
+      }),
+    });
+    const verification = await verifyRes.json();
+    if (verification.verification_status !== "SUCCESS") {
+      console.warn("PayPal webhook: invalid signature");
+      return res.status(400).json({ error: "invalid signature" });
+    }
+
+    if (event.event_type === "BILLING.SUBSCRIPTION.ACTIVATED") {
+      console.warn("BILLING.SUBSCRIPTION.ACTIVATED");
+      const storeHash = event.resource.custom_id; // the storeHash you passed in create-subscription
+      await Store.findOneAndUpdate(
+        { store_hash: storeHash },
+        { plan: "pro", planPurchasedAt: new Date(), paypalSubscriptionId: event.resource.id }
+      );
+    }
+
+    if (event.event_type === "BILLING.SUBSCRIPTION.CANCELLED") {
+      await Store.findOneAndUpdate(
+        { paypalSubscriptionId: event.resource.id },
+        { plan: "free" }
+      );
+    }
+
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error("Error processing webhook:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/create-subscription", requireAppSession, async (req, res) => {
+  try {
+    const accessToken = await getPaypalAccessToken();
+    const plan = await Plan.findOne({ name: "pro" });
+
+    console.log(plan.paypalPlanId,req.storeHash, process.env.FRONTEND_BASE_URL);
+
+    const response = await fetch(`${BASE_URL}/v1/billing/subscriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan_id: plan.paypalPlanId,
+        custom_id: req.storeHash, // IMPORTANT: this is how you'll match the webhook back to this store
+        application_context: {
+          return_url: `${process.env.FRONTEND_BASE_URL}/paypal/subscription-return`,
+          cancel_url: `${process.env.FRONTEND_BASE_URL}/paypal/subscription-cancel`,
+        },
+      }),
+    });
+
+    const data = await response.json();
+
+
+    console.log("Create subscription status:", response.status);
+console.log("Create subscription response:", JSON.stringify(data, null, 2));
+
+    res.status(response.status).json(data);
+    // frontend needs: data.links.find(l => l.rel === "approve").href
+    // → redirect the browser there
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/subscription-status/:id", requireAppSession, async (req, res) => {
+  try {
+    const store = await Store.findOne({
+      store_hash: req.storeHash,
+      paypalSubscriptionId: req.params.id,
+      plan: "pro",
+    }).select("_id").lean();
+
+    return res.status(200).json({
+      status: store ? "active" : "pending",
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+module.exports = {
+  router,
+  getPaypalAccessToken,
+  getProPlanAmount,
+};

@@ -29,7 +29,13 @@ class QueueManager {
       [QUEUE_NAMES.images]:             new Queue(QUEUE_NAMES.images, queueConfig),
       [QUEUE_NAMES.restore]:            new Queue(QUEUE_NAMES.restore, queueConfig),
       [QUEUE_NAMES.restoreImages]:      new Queue(QUEUE_NAMES.restoreImages, queueConfig),
-      [QUEUE_NAMES.webhooks]:           new Queue(QUEUE_NAMES.webhooks, queueConfig),
+      [QUEUE_NAMES.webhooks]:           new Queue(QUEUE_NAMES.webhooks, {
+        connection: redis,
+        defaultJobOptions: {
+          removeOnFail: { count: 5 },
+          removeOnComplete: { count: 5 },
+        },
+      }),
     };
   }
 

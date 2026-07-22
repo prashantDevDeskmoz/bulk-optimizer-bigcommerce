@@ -170,16 +170,21 @@ const getDashboardInfo = async (req, res) => {
         // get Total Products, Optimized Products, Queue, Quota Used
 
         //1. Bc api hit to get total count not products (for this we are using limit : 1)
-        const products = await axios.get(listProductsUrl(req.storeHash), {
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "X-Auth-Token": accessToken,
-                "Content-Type": "application/json",
-            },
-            params: { limit: 1 },
-        });
+        let products = 0;
+        try{
+            products = await axios.get(listProductsUrl(req.storeHash), {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "X-Auth-Token": accessToken,
+                    "Content-Type": "application/json",
+                },
+                params: { limit: 1 },
+            });
+        }catch(error){
+            console.error("[getDashboardInfo] error fetching products:", error.message);
+        }
 
-        const totalProducts = products.data.meta.pagination.total;
+        const totalProducts = products?.data?.meta?.pagination?.total || 0;
 
         //2. Optimized Products from JobHistory where storeHash = req.storeHash and status = "completed" (sum of processedItems)
         const optimizedItems = await JobHistory.aggregate([

@@ -52,13 +52,13 @@ const getPlanAndCheckLimit = async (store) => {
         const totalItemsProcessed = aggregateResult[0]?.totalItems || 0;
 
         if (plan.itemLimit == null) {
-            return { planLimitReached: false, usage: totalItemsProcessed, canBeUpdated: null, planLimit: null };
+            return { planLimitReached: false, usage: totalItemsProcessed, canBeUpdated: null, planLimit: null, planName: store.plan };
         }
 
         const planLimitReached = totalItemsProcessed >= plan.itemLimit;
         const canBeUpdated = Math.max(0, plan.itemLimit - totalItemsProcessed);
 
-        return { planLimitReached, usage: totalItemsProcessed, canBeUpdated, planLimit: plan.itemLimit };
+        return { planLimitReached, usage: totalItemsProcessed, canBeUpdated, planLimit: plan.itemLimit, planName: store.plan };
 
     } catch (error) {
         console.error(error);

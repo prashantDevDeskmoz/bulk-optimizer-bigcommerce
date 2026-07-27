@@ -74,6 +74,35 @@ async function getChannelIdsForProduct(storeHash, productId, accessToken) {
   ];
 }
 
+async function pollProductImages(storeHash, productId, accessToken) {
+  const maxRetries = 4;
+  const interval = 1000;
+  let previousCount = -1;
+  let lastImages = [];
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const { data } = await axios.get(`${getProductUrl(storeHash, productId)}/images`, {
+      headers: headers(accessToken),
+    });
+
+    const images = Array.isArray(data?.data) ? data.data : [];
+    const currentCount = images.length;
+
+    if (currentCount === previousCount) {
+      return images;
+    }
+
+    previousCount = currentCount;
+    lastImages = images;
+
+    if (attempt < maxRetries - 1) {
+      await sleep(interval);
+    }
+  }
+
+  return lastImages;
+}
+
 async function throttleFromResponse(response) {
   const remaining = response?.headers?.["x-rate-limit-requests-left"];
   if (remaining && parseInt(remaining, 10) < RATE_LIMIT_LOW_THRESHOLD) {
@@ -233,12 +262,8 @@ async function processProductWebhook(job, store, webhookHistoryId) {
   });
   await job.updateProgress({ status: "fetching", processedItems: 0, totalItems: 0 });
 
-  // wait for 1 second to avoid incomplete product data
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
   const { data: productRes } = await axios.get(getProductUrl(store.store_hash, productId), {
     headers: headers(accessToken),
-    params: { include: "images" },
   });
 
   const productData = productRes?.data;
@@ -283,6 +308,11 @@ async function processProductWebhook(job, store, webhookHistoryId) {
   }
 
   cruiseItems = cruiseItems.filter((item) => item.template);
+
+  if (cruiseItems.some((item) => item.target === "alt")) {
+    productData.images = await pollProductImages(store.store_hash, productId, accessToken);
+  }
+
   const total = cruiseItems.length;
 
   await WebhookHistory.findByIdAndUpdate(webhookHistoryId, {

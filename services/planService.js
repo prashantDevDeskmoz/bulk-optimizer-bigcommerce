@@ -71,7 +71,7 @@ const ensureDefaultPlans = async () => {
         if(plans.length === 0) {
             await Plan.insertMany([
                 {name: "free", description: "Free plan", itemLimit: 100, period: "monthly", price: 0},
-                {name: "pro", description: "Pro plan", itemLimit: null, period: "monthly", price: 20},
+                {name: "pro", description: "Pro plan", itemLimit: null, period: "monthly", price: 10},
             ]);
         }
     });

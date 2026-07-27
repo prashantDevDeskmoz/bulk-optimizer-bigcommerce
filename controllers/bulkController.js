@@ -115,7 +115,7 @@ const updateCruiseControl = async (req, res) => {
             { returnDocument: "after", upsert: true }
         );
 
-        return res.status(200).json({ status: true, message: "Cruise control updated" });
+        return res.status(200).json({ status: true, message: "Auto seo updated" });
 
     } catch (error) {
         console.error(error);
@@ -187,12 +187,12 @@ const getDashboardInfo = async (req, res) => {
         const totalProducts = products?.data?.meta?.pagination?.total || 0;
 
         //2. Optimized Products from JobHistory where storeHash = req.storeHash and status = "completed" (sum of processedItems)
-        const optimizedItems = await JobHistory.aggregate([
-            { $match: { storeHash: req.storeHash } },
-            { $group: { _id: null, total: { $sum: "$processedItems" } } },
-        ]);
+        // const optimizedItems = await JobHistory.aggregate([
+        //     { $match: { storeHash: req.storeHash } },
+        //     { $group: { _id: null, total: { $sum: "$processedItems" } } },
+        // ]);
 
-        const optimizedItemsCount = optimizedItems[0]?.total || 0;
+        // const optimizedItemsCount = optimizedItems[0]?.total || 0;
 
         //3. Queue from queueManager.getQueue(QUEUE_NAMES.products).count()
         const queue = await JobHistory.countDocuments({ storeHash: req.storeHash, status: {$in: ["pending"]} });
@@ -200,7 +200,7 @@ const getDashboardInfo = async (req, res) => {
         //4. Quota Used from JobHistory where storeHash = req.storeHash and status = "completed"
         const quotaUsed = await getPlanAndCheckLimit(store);
 
-        return res.status(200).json({ status: true, data: { totalProducts, optimizedItemsCount, queue, quotaUsed } });
+        return res.status(200).json({ status: true, data: { totalProducts, queue, quotaUsed } });
 
     } catch (error) {
         console.error(error);

@@ -28,7 +28,7 @@ const subscribeWebhooksOnInstall = async (storeHash, accessToken) => {
 
 
   for (const scope of WEBHOOK_SCOPES) {
-    const destination = `${baseUrl}/webhooks/bigcommerce/${scope.split("/")[1]}`;
+    const destination = `${baseUrl}/webhooks/bigcommerce/${scope.split("/")[1]}/${scope.split("/")[2]}`;
     try {
       await createWebhook(storeHash, accessToken, scope, destination);
       console.log(`✅ Webhook subscribed on install: ${scope}`);

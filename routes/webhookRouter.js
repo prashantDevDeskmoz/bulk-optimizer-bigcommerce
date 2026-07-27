@@ -3,7 +3,7 @@ const { handleProductCreatedWebhook, handleCategoryCreatedWebhook } = require(".
 
 const router = Router();
 
-router.post("/bigcommerce/product", handleProductCreatedWebhook);
-router.post("/bigcommerce/category", handleCategoryCreatedWebhook);
+router.post("/bigcommerce/product/created", handleProductCreatedWebhook);
+router.post("/bigcommerce/category/created", handleCategoryCreatedWebhook);
 
 module.exports = router;

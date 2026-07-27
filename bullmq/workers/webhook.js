@@ -16,6 +16,7 @@ const {
   listTreeCategoriesUrl,
   listTreesUrl,
   productChannelAssignmentsUrl,
+  updateImageUrl,
 } = require("../../utils/bcApi");
 const { QUEUE_NAMES } = require("../queueManager");
 
@@ -92,29 +93,57 @@ async function applyProductUpdate({
   storeId,
   bcChannelId,
 }) {
+  const previous =
+    target === "title"
+      ? { page_title: productData.page_title ?? "" }
+      : target === "meta"
+        ? { meta_description: productData.meta_description ?? "" }
+        : {
+            images: (productData.images ?? []).map((image) => ({
+              imageId: image.id,
+              altText: image.description ?? "",
+            })),
+          };
+
   const child = await new WebhookHistory({
     storeId,
     resource: "products",
+    resourceId: productId,
     target,
     template,
     bcChannelId,
+    previous,
     status: "updating",
     startedAt: new Date(),
   }).save();
 
   try {
     const rendered = renderProductTemplate(template, productData);
-    const updatePayload =
-      target === "title"
-        ? { id: productId, page_title: rendered }
-        : { id: productId, meta_description: rendered };
 
-    const response = await putWithRetry(
-      batchUpdateProductsUrl(storeHash),
-      [updatePayload],
-      headers(accessToken),
-    );
-    await throttleFromResponse(response);
+    if (target === "alt") {
+      const images = productData.images ?? [];
+      for (const image of images) {
+        if ((image.description ?? "") === rendered) continue;
+        const response = await putWithRetry(
+          updateImageUrl(storeHash, productId, image.id),
+          { description: rendered },
+          headers(accessToken),
+        );
+        await throttleFromResponse(response);
+      }
+    } else {
+      const updatePayload =
+        target === "title"
+          ? { id: productId, page_title: rendered }
+          : { id: productId, meta_description: rendered };
+
+      const response = await putWithRetry(
+        batchUpdateProductsUrl(storeHash),
+        [updatePayload],
+        headers(accessToken),
+      );
+      await throttleFromResponse(response);
+    }
 
     await WebhookHistory.findByIdAndUpdate(child._id, {
       status: "done",
@@ -143,12 +172,19 @@ async function applyCategoryUpdate({
   storeId,
   bcChannelId,
 }) {
+  const previous =
+    target === "title"
+      ? { page_title: categoryData.page_title ?? "" }
+      : { meta_description: categoryData.meta_description ?? "" };
+
   const child = await new WebhookHistory({
     storeId,
     resource: "categories",
+    resourceId: categoryId,
     target,
     template,
     bcChannelId,
+    previous,
     status: "updating",
     startedAt: new Date(),
   }).save();
@@ -199,7 +235,9 @@ async function processProductWebhook(job, store, webhookHistoryId) {
 
   const { data: productRes } = await axios.get(getProductUrl(store.store_hash, productId), {
     headers: headers(accessToken),
+    params: { include: "images" },
   });
+
   const productData = productRes?.data;
   if (!productData?.id) {
     throw new Error("Product not found in catalog");
@@ -222,7 +260,7 @@ async function processProductWebhook(job, store, webhookHistoryId) {
     storeId: store._id,
     bcChannelId: { $in: channelIds.map(String) },
     applyTo: "products",
-    target: { $in: ["title", "meta"] },
+    target: { $in: ["title", "meta", "alt"] },
     cruiseControl: true,
     template: { $ne: null, $ne: "" },
   });
@@ -234,9 +272,11 @@ async function processProductWebhook(job, store, webhookHistoryId) {
     );
     const titleTemplate = forChannel.find((item) => item.target === "title");
     const metaTemplate = forChannel.find((item) => item.target === "meta");
+    const altTemplate = forChannel.find((item) => item.target === "alt");
 
     if (titleTemplate && !cruiseItems.some((t) => t.target === "title")) cruiseItems.push(titleTemplate);
     if (metaTemplate && !cruiseItems.some((t) => t.target === "meta")) cruiseItems.push(metaTemplate);
+    if (altTemplate && !cruiseItems.some((t) => t.target === "alt")) cruiseItems.push(altTemplate);
   }
 
   cruiseItems = cruiseItems.filter((item) => item.template);

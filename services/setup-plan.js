@@ -31,7 +31,7 @@ async function setup() {
           tenure_type: "REGULAR",
           sequence: 1,
           total_cycles: 0, // 0 = never stops on its own
-          pricing_scheme: { fixed_price: { value: "20.00", currency_code: "USD" } },
+          pricing_scheme: { fixed_price: { value: "10.00", currency_code: "USD" } },
         }],
         payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 3 },
       }),
@@ -60,4 +60,4 @@ async function setup() {
     console.log("SUBSCRIPTIONS:", subscriptions);
   }
 
-  getSubscriptions();
+  setup();

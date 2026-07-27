@@ -1,5 +1,7 @@
 const Store = require("../models/Store");
 const JobHistory = require("../models/JobHistory");
+const ItemSnapshot = require("../models/ItemSnapshot");
+const RestoreHistory = require("../models/RestoreHistory");
 const {QueueManager, QUEUE_NAMES} = require("../bullmq/queueManager");
 
 queueManager = new QueueManager()
@@ -93,9 +95,56 @@ const getJobHistories = async (req, res) => {
       })
     );
 
+    const completedJobIds = enriched
+      .filter((h) => h.status === "completed" && h.jobId)
+      .map((h) => h.jobId);
+
+    const snapshotCountByJob = {};
+    const restoreStatusByJob = {};
+
+    if (completedJobIds.length > 0) {
+      const [snapshotAgg, restores] = await Promise.all([
+        ItemSnapshot.aggregate([
+          {
+            $match: {
+              storeHash: req.storeHash,
+              jobHistoryId: { $in: completedJobIds },
+            },
+          },
+          { $group: { _id: "$jobHistoryId", count: { $sum: 1 } } },
+        ]),
+        RestoreHistory.find({ sourceJobId: { $in: completedJobIds } })
+          .sort({ createdAt: -1 })
+          .select("sourceJobId status")
+          .lean(),
+      ]);
+
+      for (const row of snapshotAgg) {
+        snapshotCountByJob[row._id] = row.count;
+      }
+      for (const row of restores) {
+        if (restoreStatusByJob[row.sourceJobId] == null) {
+          restoreStatusByJob[row.sourceJobId] = row.status;
+        }
+      }
+    }
+
+    const data = enriched.map((history) => {
+      if (history.status !== "completed" || !history.jobId) {
+        return { ...history, restorable: false };
+      }
+      const snapshotCount = snapshotCountByJob[history.jobId] ?? 0;
+      const restoreStatus = restoreStatusByJob[history.jobId] ?? null;
+      const restorable =
+        snapshotCount > 0 &&
+        restoreStatus !== "completed" &&
+        restoreStatus !== "pending";
+      return { ...history, restorable, restoreStatus };
+    });
+
     return res.status(200).json({
       status: true,
-      data: enriched,
+      data,
       pagination: {
         page,
         limit,

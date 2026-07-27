@@ -61,6 +61,15 @@ const webhookHistorySchema = new mongoose.Schema({
         type: String,
         default: null,
     },
+    // Values before cruise write — for restore later
+    previous: {
+        page_title: { type: String, default: null },
+        meta_description: { type: String, default: null },
+        images: [{
+            imageId: { type: Number },
+            altText: { type: String, default: "" },
+        }],
+    },
 }, { timestamps: true });
 
 const WebhookHistory = mongoose.model("Webhook_history", webhookHistorySchema);

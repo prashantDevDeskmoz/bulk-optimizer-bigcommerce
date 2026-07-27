@@ -233,6 +233,9 @@ async function processProductWebhook(job, store, webhookHistoryId) {
   });
   await job.updateProgress({ status: "fetching", processedItems: 0, totalItems: 0 });
 
+  // wait for 1 second to avoid incomplete product data
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
   const { data: productRes } = await axios.get(getProductUrl(store.store_hash, productId), {
     headers: headers(accessToken),
     params: { include: "images" },

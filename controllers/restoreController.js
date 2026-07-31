@@ -7,6 +7,8 @@ const { QueueManager, QUEUE_NAMES } = require("../bullmq/queueManager");
 const { batchUpdateProductsUrl, batchUpdateCategoriesUrl, updateBrandUrl, updateImageUrl } = require("../utils/bcApi");
 const queueManager = new QueueManager();
 
+const escapeRegex = (str = "") => String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const getRestoreItems = async (req, res) => {
   try {
     const {page = 1, limit = 10 , itemType, bcChannelId, search} = req.body;
@@ -14,17 +16,26 @@ const getRestoreItems = async (req, res) => {
     // search with search regex of fields.name
     // group by itemId and push the target(meta, alt, title) into an array
     const items = await ItemSnapshot.aggregate([
-      {$match : {storeHash: req.storeHash, 
-        ...(itemType !== "brand" ? {bcChannelId} : {}), 
-        itemType: itemType,
-        "fields.name": {$regex: search, $options: "i"},
-        // is_restored: {$ne: true}
-        }
+      {
+        $match: {
+          storeHash: req.storeHash,
+          ...(itemType === "brand"
+            ? { itemType: "brand" }
+            : itemType !== "all" 
+              ? { itemType, bcChannelId }
+              : {
+                  $or: [
+                    { itemType: { $in: ["product", "category"] }, bcChannelId },
+                    { itemType: "brand" },
+                  ],
+                }),
+          "fields.name": { $regex: escapeRegex(search ?? ""), $options: "i" },
+        },
       },
       {$sort : {capturedAt: -1}},
       {
         $group :{
-          _id : "$itemId",
+          _id: { itemId: "$itemId", itemType: "$itemType" },
           name : {$first : "$fields.name"},
           target : {$push : "$target"},
           capturedAt : {$push : "$capturedAt"},

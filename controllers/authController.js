@@ -12,6 +12,7 @@ const { storeUrl } = require("../utils/bcApi");
 const { sendInstallNotificationEmail } = require("../services/emailService");
 const { subscribeWebhooksOnInstall, unsubscribeWebhooksOnUninstall } = require("../utils/webhooks");
 const { syncStoreChannels } = require("../utils/channelSync");
+const { populateDefaultTemplates } = require("../utils/populateHelper");
 
 const handleAuthCallback = async (req, res) => {
   try {
@@ -84,14 +85,21 @@ const handleAuthCallback = async (req, res) => {
     );
 
     // 6. Sync channels from BigCommerce into our DB (needs e.g. store_channel_settings on token)
+    let channelCount = 0;
     try {
       const { count } = await syncStoreChannels(storeHash, access_token, store._id);
+      channelCount = count;
       console.log(`✅ Synced ${count} channel(s) for store ${storeHash}`);
     } catch (err) {
       console.error(
         "⚠️ Channel sync on install failed (add Channels scope or check token):",
         err?.response?.data ?? err.message,
       );
+    }
+
+    // 7 Populate default templates for every channel in store
+    if (channelCount > 0) {
+      await populateDefaultTemplates(store);
     }
 
     // 7. Subscribe webhooks on install

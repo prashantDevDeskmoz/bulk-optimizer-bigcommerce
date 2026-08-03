@@ -16,6 +16,7 @@ const {
   listTreeCategoriesUrl,
   listTreesUrl,
   productChannelAssignmentsUrl,
+  updateBrandUrl,
   updateImageUrl,
 } = require("../../utils/bcApi");
 const { QUEUE_NAMES } = require("../queueManager");
@@ -28,7 +29,7 @@ const headers = (accessToken) => ({
   "X-Auth-Token": accessToken,
 });
 
-function renderProductTemplate(template, product) {
+function renderProductTemplate(template, product, storeName = null) {
   const dict = {
     "[[product name]]": product?.name ?? "",
     "[[sku]]": product?.sku ?? "",
@@ -36,7 +37,7 @@ function renderProductTemplate(template, product) {
     "[[currency]]": product?.currency ?? "",
     "[[type]]": product?.type ?? "",
     "[[category name]]": "",
-    "[[brand]]": product?.brand_name ?? "",
+    "[[brand]]": product?.brand_name && product.brand_name !== "" ? product.brand_name : storeName ?? "",
     "[[mpn]]": product?.mpn ?? "",
     "[[condition]]": product?.condition ?? "",
     "[[store name]]": "",
@@ -121,6 +122,7 @@ async function applyProductUpdate({
   accessToken,
   storeId,
   bcChannelId,
+  storeName = null,
 }) {
   const previous =
     target === "title"
@@ -147,7 +149,23 @@ async function applyProductUpdate({
   }).save();
 
   try {
-    const rendered = renderProductTemplate(template, productData);
+    if (
+      template?.includes("[[brand]]") &&
+      !productData.brand_name &&
+      productData.brand_id != null &&
+      productData.brand_id !== ""
+    ) {
+      try {
+        const { data } = await axios.get(updateBrandUrl(storeHash, productData.brand_id), {
+          headers: headers(accessToken),
+        });
+        productData.brand_name = data?.data?.name ?? "";
+      } catch {
+        productData.brand_name = "";
+      }
+    }
+
+    const rendered = renderProductTemplate(template, productData, storeName);
 
     if (target === "alt") {
       const images = productData.images ?? [];
@@ -337,6 +355,7 @@ async function processProductWebhook(job, store, webhookHistoryId) {
       accessToken,
       storeId: store._id,
       bcChannelId: item.bcChannelId,
+      storeName: item.isDefault ? store.store_name : null,
     });
     done += 1;
     await job.updateProgress({ status: "updating", processedItems: done, totalItems: total });

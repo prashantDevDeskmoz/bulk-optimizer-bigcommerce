@@ -17,13 +17,18 @@ const updateBulk = async (req, res) => {
         if (!store) {return res.status(404).json({ status: false, message: "Store not found" })}
         if (!channel && bcChannelId) {return res.status(404).json({ status: false, message: "Channel not found" })}
 
-        if(saveTemplate) {
+        // check whether the template is default or not
+        const oldExistingTemplateState = await Template.findOne({ storeId: store._id, bcChannelId, applyTo, target });
+        const oldExistingTemplateIsDefault = oldExistingTemplateState?.isDefault;
+        const isTemplateDefault = template.trim() === "[[product name]] | [[brand]]"
+
+        // if(saveTemplate) {
             await Template.findOneAndUpdate(
                 { storeId: store._id, bcChannelId, applyTo, target },
-                { template },    
+                { template, isDefault: false },
                 { returnDocument: "after", upsert: true }
             );
-        }
+        // }
 
         const existingJob = await JobHistory.find({ 
             storeHash: req.storeHash,
@@ -65,7 +70,8 @@ const updateBulk = async (req, res) => {
             accessToken,
             bcChannelId,
             blanksOnly,
-            canBeUpdated
+            canBeUpdated,
+            storeName: oldExistingTemplateIsDefault && isTemplateDefault ? store.store_name : null,
         }
 
         let job = null;
@@ -125,7 +131,7 @@ const updateCruiseControl = async (req, res) => {
 
 const saveTemplates = async (req, res) => {
     try {
-        const {template, applyTo, target, bcChannelId} = req.body;
+        const {template, applyTo, target, bcChannelId, overrideDefault} = req.body;
         const store = await Store.findByHash(req.storeHash);
         if (!store) {return res.status(404).json({ status: false, message: "Store not found" })}
 
@@ -135,7 +141,10 @@ const saveTemplates = async (req, res) => {
             bcChannelId,
             applyTo,
             target,
-        }, { template }, { returnDocument: "after", upsert: true });
+        }, { 
+            template,
+            ...(overrideDefault ? { isDefault: false } : {}),
+        }, { returnDocument: "after", upsert: true });
 
         return res.status(200).json({ status: true, message: "Template saved" });
     } catch (error) {

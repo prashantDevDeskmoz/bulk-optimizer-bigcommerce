@@ -188,7 +188,7 @@ const saveImageSnapshot = async ({ lastUpdatedImageId, lastUpdatedProductId, fai
 };
 
 
-const templateRenderer = (template, item, itemType) => {
+const templateRenderer = (template, item, itemType, storeName = null) => {
     let tokens = {};
     if(itemType === "category") {
         tokens = {
@@ -208,7 +208,7 @@ const templateRenderer = (template, item, itemType) => {
             "[[currency]]": item?.currency ?? "",
             "[[type]]": item?.type ?? "",
             "[[category name]]": "",
-            "[[brand]]": item?.brand_name ?? "",
+            "[[brand]]": item?.brand_name && item.brand_name !== "" ? item.brand_name : storeName ? storeName : "",
             "[[mpn]]": item?.mpn ?? "",
             "[[condition]]": item?.condition ?? "",
             "[[store name]]": "",
@@ -221,7 +221,7 @@ const templateRenderer = (template, item, itemType) => {
     return out;
 }
 
-const updateSnapshotAndReturnUpdatablePayload = async ({storeHash, itemType, items, target, jobId, template, bcChannelId = null}) => {
+const updateSnapshotAndReturnUpdatablePayload = async ({storeHash, itemType, items, target, jobId, template, bcChannelId = null, storeName = null}) => {
     try{
         // note: no need to check for slot as we are not updating any existing snapshots because we are creating only one history record for each item
         const existingSnapshots = await ItemSnapshot.find({
@@ -284,7 +284,7 @@ const updateSnapshotAndReturnUpdatablePayload = async ({storeHash, itemType, ite
             updatablePayload.push({       
                 [itemType === "category" ? "category_id" : "id"]: itemId,
                 ...(target === "title" ? 
-                    { page_title: templateRenderer(template, item, itemType) }
+                    { page_title: templateRenderer(template, item, itemType, storeName) }
                      : target === "meta" ? { meta_description: templateRenderer(template, item, itemType) }
                      : target === "alt" ? { images: imagesWithAlt } : {}),
             }); 

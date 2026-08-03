@@ -5,12 +5,12 @@ const Template = require("../models/Template");
 // [[store name]] to an empty string — same behaviour as the template editor.
 const defaultTemplates = (storeName) => [
   { applyTo: "products", target: "title", template: `[[product name]] | [[brand]]` },
-  { applyTo: "products", target: "meta", template: `Buy [[product name]] from ${storeName} at the best price.` },
+  { applyTo: "products", target: "meta", template: `Buy [[product name]] from the ${storeName} at the best price.` },
   { applyTo: "products", target: "alt", template: `[[product name]]-Image1` },
   { applyTo: "categories", target: "title", template: `[[category name]] | ${storeName}` },
-  { applyTo: "categories", target: "meta", template: `Browse [[category name]] at ${storeName}. Discover quality products at great prices.` },
+  { applyTo: "categories", target: "meta", template: `Browse [[category name]] at the ${storeName}. Discover quality products at great prices.` },
   { applyTo: "brands", target: "title", template: `[[name]] Products | ${storeName}` },
-  { applyTo: "brands", target: "meta", template: `Browse the latest [[name]] collection at ${storeName} with great prices.` },
+  { applyTo: "brands", target: "meta", template: `Browse the latest [[name]] collection at the ${storeName} with great prices.` },
 ];
 
 const populateDefaultTemplates = async (store) => {
@@ -32,8 +32,7 @@ const populateDefaultTemplates = async (store) => {
               applyTo,
               target,
             },
-            // $set so a re-install never overwrites templates the merchant edited
-            update: { $set: { template }, cruiseControl: false },
+            update: { $set: { template, cruiseControl: false, isDefault: true } },
             upsert: true,
           },
         });

@@ -188,7 +188,7 @@ const bulkOptimizedProductWorker = new Worker(
   "bulk-optimized-products-v2",
   async (job) => {
     try {
-      const { storeHash, target, template, accessToken, blanksOnly, bcChannelId, canBeUpdated } = job.data;
+      const { storeHash, target, template, accessToken, blanksOnly, bcChannelId, canBeUpdated, storeName } = job.data;
       let page = 1;
       let done = 0;
       let total = 0;
@@ -220,7 +220,35 @@ const bulkOptimizedProductWorker = new Worker(
             continue;
           };
 
-          const {updatablePayload, bulkOperations} = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "product", items: products, target, jobId: job.id, bcChannelId, template});        
+          if (template?.includes("[[brand]]")) {
+            const brandIds = [
+              ...new Set(
+                products
+                  .map((p) => p.brand_id)
+                  .filter((id) => id != null && id !== ""),
+              ),
+            ];
+            if (brandIds.length > 0) {
+              const brandNameById = {};
+              for (let i = 0; i < brandIds.length; i += 50) {
+                const chunk = brandIds.slice(i, i + 50);
+                const { data: brandData } = await axios.get(listBrandsUrl(storeHash), {
+                  headers: headers(accessToken),
+                  params: { "id:in": chunk.join(","), limit: chunk.length },
+                });
+                for (const brand of brandData?.data ?? []) {
+                  brandNameById[brand.id] = brand.name ?? "";
+                }
+              }
+              for (const product of products) {
+                if (product.brand_id != null && product.brand_id !== "") {
+                  product.brand_name = brandNameById[product.brand_id] ?? "";
+                }
+              }
+            }
+          }
+
+          const {updatablePayload, bulkOperations} = await updateSnapshotAndReturnUpdatablePayload({storeHash, itemType: "product", items: products, target, jobId: job.id, bcChannelId, template, storeName});        
 
           const { done: updatedDone } = await updateBulkProducts({ storeHash, updatablePayload, done, accessToken, job, bulkOperations});
 

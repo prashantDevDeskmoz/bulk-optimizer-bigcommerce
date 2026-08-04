@@ -124,6 +124,10 @@ async function applyProductUpdate({
   bcChannelId,
   storeName = null,
 }) {
+
+  if (target === "alt" && !(productData.images?.length > 0)) {
+    return false; // before new WebhookHistory(...)
+  }
   const previous =
     target === "title"
       ? { page_title: productData.page_title ?? "" }

@@ -21,7 +21,8 @@ function verifySignedPayloadJwt(token) {
   }
   // console.log("[verifySignedPayloadJwt] jwt.verify(token, secret):", jwt.verify(token, secret));
   return jwt.verify(token, secret, {
-    clockTolerance : 60 // 60 seconds
+    ignoreExpiration: true,
+    // clockTolerance : 60 // 60 seconds
   });                                             
 }
 

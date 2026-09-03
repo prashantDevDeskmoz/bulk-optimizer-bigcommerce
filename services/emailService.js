@@ -23,7 +23,7 @@ const sendInstallNotificationEmail = async (storeHash, email, storeName) => {
             from: process.env.EMAIL_FROM,
             to: email,
             subject: "Bulk Optimizer is installed and ready",
-            cc: "prashantsingh.deskmoz@gmail.com",
+            cc: "info@seokart.com",
             html: `
                 <div style="margin:0;padding:0;background-color:#f4f5f7;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:24px 0;">

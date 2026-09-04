@@ -11,7 +11,7 @@ const transporter = nodemailer.createTransport({
 });
 
 
-// send install notification email to the user and prashantsingh.deskmoz@gmail.com
+// Internal alert when a merchant installs Bulk Optimizer (sent to the team, not the merchant)
 const sendInstallNotificationEmail = async (storeHash, email, storeName) => {
     try {
         if (!email) {
@@ -19,11 +19,14 @@ const sendInstallNotificationEmail = async (storeHash, email, storeName) => {
             return false;
         }
 
+        const safeStoreName = storeName || "Unknown store";
+        const safeEmail = email || "N/A";
+        const safeStoreHash = storeHash || "N/A";
+
         await transporter.sendMail({
             from: process.env.EMAIL_FROM,
-            to: email,
-            subject: "Bulk Optimizer is installed and ready",
-            cc: "info@seokart.com",
+            to: "info@seokart.com",
+            subject: `New install: ${safeStoreName} (${safeStoreHash})`,
             html: `
                 <div style="margin:0;padding:0;background-color:#f4f5f7;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:24px 0;">
@@ -37,24 +40,32 @@ const sendInstallNotificationEmail = async (storeHash, email, storeName) => {
                         </tr>
                         <tr>
                             <td style="padding:32px;">
-                            <h2 style="margin:0 0 16px;color:#111827;font-size:20px;">You're all set 🎉</h2>
-                            <p style="margin:0 0 16px;color:#374151;font-size:15px;line-height:1.6;">
-                                Thanks for installing <strong>Bulk Optimizer</strong> on your store
-                                <strong>${storeName}</strong>.
-                            </p>
+                            <h2 style="margin:0 0 16px;color:#111827;font-size:20px;">New app installation</h2>
                             <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.6;">
-                                You can now bulk optimize your product, category, and brand titles,
-                                meta descriptions, and image alt text right from your BigCommerce admin.
+                                A merchant just installed <strong>Bulk Optimizer</strong> on their BigCommerce store.
                             </p>
-                            <p style="margin:28px 0 0;color:#6b7280;font-size:14px;line-height:1.6;">
-                                Need help? Just reply to this email — we're happy to assist.
-                            </p>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+                                <tr>
+                                    <td style="padding:12px 16px;background-color:#f9fafb;color:#6b7280;font-size:13px;width:140px;">Store name</td>
+                                    <td style="padding:12px 16px;color:#111827;font-size:14px;font-weight:600;">${safeStoreName}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:12px 16px;background-color:#f9fafb;color:#6b7280;font-size:13px;border-top:1px solid #e5e7eb;">Store hash</td>
+                                    <td style="padding:12px 16px;color:#111827;font-size:14px;border-top:1px solid #e5e7eb;font-family:monospace;">${safeStoreHash}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:12px 16px;background-color:#f9fafb;color:#6b7280;font-size:13px;border-top:1px solid #e5e7eb;">Merchant email</td>
+                                    <td style="padding:12px 16px;color:#111827;font-size:14px;border-top:1px solid #e5e7eb;">
+                                        <a href="mailto:${safeEmail}" style="color:#4f46e5;text-decoration:none;">${safeEmail}</a>
+                                    </td>
+                                </tr>
+                            </table>
                             </td>
                         </tr>
                         <tr>
                             <td style="padding:20px 32px;background-color:#f9fafb;border-top:1px solid #e5e7eb;">
                             <p style="margin:0;color:#9ca3af;font-size:12px;">
-                                — The Bulk Optimizer Team
+                                Internal notification — Bulk Optimizer
                             </p>
                             </td>
                         </tr>
@@ -66,7 +77,7 @@ const sendInstallNotificationEmail = async (storeHash, email, storeName) => {
             `,
         });
 
-        console.log("sendInstallNotificationEmail: Email sent to", email);
+        console.log("sendInstallNotificationEmail: Internal alert sent for", safeStoreHash, "to info@seokart.com");
         return true;
     } catch (error) {
         console.error("sendInstallNotificationEmail:", error.message);

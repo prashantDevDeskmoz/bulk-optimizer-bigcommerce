@@ -10,6 +10,7 @@ const webhookHistoryRouter = require("./webhookHistoryRouter");
 const { router: paymentRouter, getPaypalAccessToken, getProPlanAmount } = require("./payment");
 const restoreRouter = require("./restoreRouter");
 const storeRouter = require("./storeRouter");
+const adminRouter = require("./adminRouter");
 const router = Router();
 
 router.use("/", systemRouter);
@@ -23,5 +24,6 @@ router.use("/webhook-histories", webhookHistoryRouter);
 router.use("/payment", paymentRouter);
 router.use("/restore", restoreRouter);
 router.use("/store", storeRouter);
+router.use("/admin", adminRouter);
 
 module.exports = router;

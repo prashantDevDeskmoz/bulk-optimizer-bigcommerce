@@ -2,6 +2,7 @@ const { Router, raw } = require("express");
 const { requireAppSession } = require("../middleware/requireAppSession");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
+const { syncStoreToIntercom } = require("../services/intercomService");
 
 const router = Router();
 
@@ -116,6 +117,8 @@ router.post("/capture-order", requireAppSession, async (req, res) => {
       { plan: "pro", planPurchasedAt: new Date() },
     );
 
+    await syncStoreToIntercom(storeHash);
+
     return res.status(200).json({ success: true, message: "Payment captured successfully", data });
   } catch (error) {
     console.error("Error capturing PayPal order:", error);
@@ -159,13 +162,18 @@ router.post("/webhook", raw({ type: "application/json" }), async (req, res) => {
         { store_hash: storeHash },
         { plan: "pro", planPurchasedAt: new Date(), paypalSubscriptionId: event.resource.id }
       );
+      await syncStoreToIntercom(storeHash);
     }
 
     if (event.event_type === "BILLING.SUBSCRIPTION.CANCELLED") {
-      await Store.findOneAndUpdate(
+      const cancelled = await Store.findOneAndUpdate(
         { paypalSubscriptionId: event.resource.id },
-        { plan: "free" }
+        { plan: "free" },
+        { returnDocument: "after" },
       );
+      if (cancelled?.store_hash) {
+        await syncStoreToIntercom(cancelled.store_hash);
+      }
     }
 
     res.status(200).json({ received: true });

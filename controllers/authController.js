@@ -10,6 +10,7 @@ const {
 } = require("../utils/sessionJwt");
 const { storeUrl } = require("../utils/bcApi");
 const { sendInstallNotificationEmail } = require("../services/emailService");
+const { syncStoreToIntercom, buildIntercomIdentity } = require("../services/intercomService");
 const { subscribeWebhooksOnInstall, unsubscribeWebhooksOnUninstall } = require("../utils/webhooks");
 const { syncStoreChannels } = require("../utils/channelSync");
 const { populateDefaultTemplates } = require("../utils/populateHelper");
@@ -108,6 +109,9 @@ const handleAuthCallback = async (req, res) => {
     // 8. Send install email to the store owner
     await sendInstallNotificationEmail(storeHash, user?.email, storeData?.name);
 
+    // 8b. Sync contact + custom attributes to Intercom (non-blocking on failure)
+    await syncStoreToIntercom(storeHash);
+
     // 9. App session for the frontend (same shape as load flow; OAuth gives `user`, not JWT payload)
     const sessionToken = buildSessionToken({
       storeHash: storeHash,
@@ -122,6 +126,11 @@ const handleAuthCallback = async (req, res) => {
     redirectUrl.searchParams.set("storeId", storeData?.id.toString());
     redirectUrl.searchParams.set("sessionToken", sessionToken);
     redirectUrl.searchParams.set("sessionExpiresAt", sessionExpiresAt.toString());
+    const intercom = buildIntercomIdentity(storeHash);
+    if (intercom) {
+      redirectUrl.searchParams.set("user_id", intercom.user_id);
+      redirectUrl.searchParams.set("user_hash", intercom.user_hash);
+    }
     //set cookie sessionToken
     const cookieOptions = {
       httpOnly: true,
@@ -220,11 +229,14 @@ const createSessionFromLoad = async (req, res) => {
 
     res.cookie("sessionToken", sessionToken, cookieOptions);
 
+    const intercom = buildIntercomIdentity(storeHash);
+
     res.status(200).json({
       status: true,
       message: "Session created successfully",
       sessionToken,
       sessionMaxAgeSeconds: SESSION_TTL_SECONDS,
+      ...(intercom || {}),
     });
   } catch (error) {
     console.error("createSessionFromLoad:", error.message);
@@ -259,11 +271,13 @@ const handleUnInstall = async (req, res) => {
       return res.status(404).json({status: false, message: "Store not found"});
     }
 
-    await store.updateOne({is_active: false});
+    await store.updateOne({ is_active: false, uninstalled_at: new Date() });
 
     console.log("store.access_token", store.access_token);
 
     await unsubscribeWebhooksOnUninstall(storeHash, store.access_token);
+
+    await syncStoreToIntercom(storeHash);
 
     res.status(200).json({status: true, message: "Store uninstalled successfully"});
   } catch (error) {

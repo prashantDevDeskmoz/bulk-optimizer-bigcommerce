@@ -62,13 +62,6 @@ const buildNotificationHtml = ({ headerBg, title, intro, details }) => `
                 ${buildStoreDetailsTable(details)}
                 </td>
             </tr>
-            <tr>
-                <td style="padding:20px 32px;background-color:#f9fafb;border-top:1px solid #e5e7eb;">
-                <p style="margin:0;color:#9ca3af;font-size:12px;">
-                    Internal notification — Bulk Optimizer
-                </p>
-                </td>
-            </tr>
             </table>
         </td>
         </tr>

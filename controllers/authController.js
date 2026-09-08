@@ -107,7 +107,10 @@ const handleAuthCallback = async (req, res) => {
     // 7. Subscribe webhooks on install
     await subscribeWebhooksOnInstall(storeHash, access_token);
 
-    // 8. Send install email to the team
+    // 8b. Sync contact + custom attributes to Intercom (non-blocking on failure)
+    await syncStoreToIntercom(storeHash);
+
+    // 8b. Send install email to the team
     await sendInstallNotificationEmail({
       storeHash,
       email: user?.email,
@@ -115,9 +118,6 @@ const handleAuthCallback = async (req, res) => {
       address: storeData?.address,
       storeUrl: storeData?.secure_url || storeData?.url,
     });
-
-    // 8b. Sync contact + custom attributes to Intercom (non-blocking on failure)
-    await syncStoreToIntercom(storeHash);
 
     // 9. App session for the frontend (same shape as load flow; OAuth gives `user`, not JWT payload)
     const sessionToken = buildSessionToken({
@@ -292,6 +292,8 @@ const handleUnInstall = async (req, res) => {
 
     await unsubscribeWebhooksOnUninstall(storeHash, store.access_token);
 
+    await syncStoreToIntercom(storeHash);
+
     await sendUninstallNotificationEmail({
       storeHash,
       email: store.email,
@@ -300,7 +302,7 @@ const handleUnInstall = async (req, res) => {
       storeUrl: store.store_url || store.store_domain,
     });
 
-    await syncStoreToIntercom(storeHash);
+    
 
     res.status(200).json({status: true, message: "Store uninstalled successfully"});
   } catch (error) {

@@ -89,6 +89,7 @@ const sendInstallNotificationEmail = async (details = {}) => {
             from: process.env.EMAIL_FROM,
             to: "info@seokart.com",
             cc: "prashantsingh.deskmoz@gmail.com",
+            replyTo: details?.email || undefined,  // merchant email
             subject: `New install: ${safe.name} (${safe.storeHash})`,
             html: buildNotificationHtml({
                 headerBg: "#4f46e5",
@@ -115,6 +116,7 @@ const sendUninstallNotificationEmail = async (details = {}) => {
             from: process.env.EMAIL_FROM,
             to: "info@seokart.com",
             cc: "prashantsingh.deskmoz@gmail.com",
+            replyTo: details?.email || undefined,  // merchant email
             subject: `Uninstall: ${safe.name} (${safe.storeHash})`,
             html: buildNotificationHtml({
                 headerBg: "#dc2626",

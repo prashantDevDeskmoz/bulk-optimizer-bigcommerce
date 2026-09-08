@@ -9,7 +9,7 @@ const {
   buildSessionToken,
 } = require("../utils/sessionJwt");
 const { storeUrl } = require("../utils/bcApi");
-const { sendInstallNotificationEmail } = require("../services/emailService");
+const { sendInstallNotificationEmail, sendUninstallNotificationEmail } = require("../services/emailService");
 const { syncStoreToIntercom, buildIntercomIdentity } = require("../services/intercomService");
 const { subscribeWebhooksOnInstall, unsubscribeWebhooksOnUninstall } = require("../utils/webhooks");
 const { syncStoreChannels } = require("../utils/channelSync");
@@ -74,7 +74,8 @@ const handleAuthCallback = async (req, res) => {
           email: user?.email,
           store_name: storeData?.name || null,
           store_domain: storeData?.domain || null,
-          store_url: storeData?.url || null,
+          store_url: storeData?.secure_url || storeData?.url || null,
+          store_address: storeData?.address || null,
           platform_version: storeData?.platform_version || null,
           currency: storeData?.currency || null,
           timezone: storeData?.timezone.name || null,
@@ -106,8 +107,14 @@ const handleAuthCallback = async (req, res) => {
     // 7. Subscribe webhooks on install
     await subscribeWebhooksOnInstall(storeHash, access_token);
 
-    // 8. Send install email to the store owner
-    await sendInstallNotificationEmail(storeHash, user?.email, storeData?.name);
+    // 8. Send install email to the team
+    await sendInstallNotificationEmail({
+      storeHash,
+      email: user?.email,
+      name: storeData?.name,
+      address: storeData?.address,
+      storeUrl: storeData?.secure_url || storeData?.url,
+    });
 
     // 8b. Sync contact + custom attributes to Intercom (non-blocking on failure)
     await syncStoreToIntercom(storeHash);
@@ -215,6 +222,9 @@ const createSessionFromLoad = async (req, res) => {
       return res.status(403).json({ status: false, message: "Store is not active" });
     }
 
+    store.last_accessed_payload = signed_payload_jwt;
+    await store.save();
+
     const sessionToken = createAppSessionToken({ storeHash, bcPayload });
     const sessionExpiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
 
@@ -223,13 +233,18 @@ const createSessionFromLoad = async (req, res) => {
       sameSite: "none",
       secure: true,
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: "/",
+      path: "/",     
       domain : ".shares.zrok.io"
     };
 
     res.cookie("sessionToken", sessionToken, cookieOptions);
 
     const intercom = buildIntercomIdentity(storeHash);
+
+    // Keep Intercom contact attributes fresh on each app load (don't block session)
+    syncStoreToIntercom(storeHash).catch((err) => {
+      console.error("syncStoreToIntercom on load:", err?.message || err);
+    });
 
     res.status(200).json({
       status: true,
@@ -276,6 +291,14 @@ const handleUnInstall = async (req, res) => {
     console.log("store.access_token", store.access_token);
 
     await unsubscribeWebhooksOnUninstall(storeHash, store.access_token);
+
+    await sendUninstallNotificationEmail({
+      storeHash,
+      email: store.email,
+      name: store.store_name,
+      address: store.store_address,
+      storeUrl: store.store_url || store.store_domain,
+    });
 
     await syncStoreToIntercom(storeHash);
 

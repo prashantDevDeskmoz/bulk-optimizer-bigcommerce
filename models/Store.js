@@ -31,6 +31,10 @@ const storeSchema = new mongoose.Schema(
         type: String,
         default: null,
       },
+      store_address: {
+        type: String,
+        default: null,
+      },
       platform_version: {
         type: String,
         default: null,
@@ -74,6 +78,10 @@ const storeSchema = new mongoose.Schema(
       },
       planPurchasedAt: {
         type: Date,
+        default: null,
+      },
+      last_accessed_payload: {
+        type: String,
         default: null,
       },
     },

@@ -178,7 +178,7 @@ const handleAuthCallback = async (req, res) => {
               <p class="muted">Store: ${storeHash}</p>
             </div>
             <script>
-              window.top.location.href = "${redirectUrl.toString()}";
+              window.location.href = "${redirectUrl.toString()}";
             </script>
           </body>
         </html>

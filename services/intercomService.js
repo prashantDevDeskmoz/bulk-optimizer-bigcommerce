@@ -80,6 +80,7 @@ const syncStoreToIntercom = async (storeHash) => {
       Plan: planLabel,
       "Plan name": planName,
       "Payment status": isPro ? "paid" : "free",
+      "App name": "Bulk Optimizer"
     };
 
     await axios.post(

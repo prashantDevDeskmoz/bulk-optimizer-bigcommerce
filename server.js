@@ -12,8 +12,8 @@ const app = express();
 app.use(
   cors({
     origin: [
-      "http://localhost:4005",
-      "http://localhost:5173",
+      // "http://localhost:4005",
+      // "http://localhost:5173",
       process.env.FRONTEND_BASE_URL || "http://localhost:4005",
       process.env.ADMIN_PANEL_URL || "http://localhost:5173",
     ],

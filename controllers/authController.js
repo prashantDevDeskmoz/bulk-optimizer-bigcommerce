@@ -133,6 +133,9 @@ const handleAuthCallback = async (req, res) => {
     redirectUrl.searchParams.set("storeId", storeData?.id.toString());
     redirectUrl.searchParams.set("sessionToken", sessionToken);
     redirectUrl.searchParams.set("sessionExpiresAt", sessionExpiresAt.toString());
+    if (user?.email) {
+      redirectUrl.searchParams.set("email", user.email);
+    }
     const intercom = buildIntercomIdentity(storeHash);
     if (intercom) {
       redirectUrl.searchParams.set("user_id", intercom.user_id);
@@ -251,6 +254,8 @@ const createSessionFromLoad = async (req, res) => {
       message: "Session created successfully",
       sessionToken,
       sessionMaxAgeSeconds: SESSION_TTL_SECONDS,
+      storeHash,
+      email: store.email || bcPayload.user?.email || null,
       ...(intercom || {}),
     });
   } catch (error) {

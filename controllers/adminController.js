@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
 const JobHistory = require("../models/JobHistory");
@@ -172,6 +173,10 @@ const getPlans = async (req, res) => {
 const updatePlan = async (req, res) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ status: false, message: "Plan not found" });
+    }
+
     const { description, itemLimit, period, price, paypalPlanId } = req.body;
 
     const update = {};
@@ -183,7 +188,7 @@ const updatePlan = async (req, res) => {
       update.itemLimit = itemLimit === null || itemLimit === "" ? null : Number(itemLimit);
     }
 
-    const plan = await Plan.findByIdAndUpdate(id, { $set: update }, { returnDocument: "after" }).lean();
+const plan = await Plan.findByIdAndUpdate(id, { $set: update }, { returnDocument: "after" }).lean();
     if (!plan) {
       return res.status(404).json({ status: false, message: "Plan not found" });
     }
@@ -201,15 +206,28 @@ const getWorkersStatus = async (req, res) => {
     const data = await Promise.all(
       names.map(async (name) => {
         const queue = queueManager.queues[name];
-        const counts = await queue.getJobCounts(
-          "waiting",
-          "active",
-          "completed",
-          "failed",
-          "delayed",
-          "paused",
-        );
-        return { name, ...counts };
+        try {
+          const counts = await queue.getJobCounts(
+            "waiting",
+            "active",
+            "completed",
+            "failed",
+            "delayed",
+            "paused",
+          );
+          return { name, ...counts };
+        } catch (err) {
+          return {
+            name,
+            waiting: 0,
+            active: 0,
+            completed: 0,
+            failed: 0,
+            delayed: 0,
+            paused: 0,
+            error: err.message || "Queue unavailable",
+          };
+        }
       }),
     );
 
@@ -257,7 +275,7 @@ const getClients = async (req, res) => {
         .skip((page - 1) * limit)
         .limit(limit)
         .select(
-          "store_hash email store_name store_domain store_url is_active installed_at uninstalled_at plan access_token updatedAt createdAt planPurchasedAt paypalSubscriptionId trialDaysRemaining last_accessed_payload",
+          "store_hash email store_name store_domain store_url is_active installed_at uninstalled_at plan updatedAt createdAt planPurchasedAt paypalSubscriptionId trialDaysRemaining last_accessed_payload",
         )
         .lean(),
       Store.countDocuments(filter),
@@ -311,7 +329,12 @@ const getClients = async (req, res) => {
 
 const getClientById = async (req, res) => {
   try {
-    const client = await Store.findById(req.params.id).lean();
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ status: false, message: "Client not found" });
+    }
+
+    const client = await Store.findById(id).lean();
     if (!client) {
       return res.status(404).json({ status: false, message: "Client not found" });
     }

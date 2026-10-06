@@ -114,7 +114,6 @@ const sendUninstallNotificationEmail = async (details = {}) => {
         await transporter.sendMail({
             from: process.env.EMAIL_FROM,
             to: "info@seokart.com",
-            cc: "prashantsingh.deskmoz@gmail.com",
             replyTo: details?.email || undefined,  // merchant email
             subject: `Uninstall: ${safe.name} (${safe.storeHash})`,
             html: buildNotificationHtml({

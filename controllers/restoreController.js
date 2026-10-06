@@ -29,6 +29,7 @@ const getRestoreItems = async (req, res) => {
                     { itemType: "brand" },
                   ],
                 }),
+          is_restored: { $ne: true },
           "fields.name": { $regex: escapeRegex(search ?? ""), $options: "i" },
         },
       },
@@ -71,19 +72,30 @@ const restoreItems = async (req, res) => {
       return res.status(404).json({ status: false, message: "Store not found" });
     }
 
-    const item = await ItemSnapshot.findOne({ itemId, target, itemType, storeHash: req.storeHash });
+    const item = await ItemSnapshot.findOne({ itemId, target, itemType, storeHash: req.storeHash, is_restored: { $ne: true } });
     if(!item) {
       return res.status(404).json({ status: false, message: "Item not found" });
     }
 
     if(target === "alt" && itemType === "product") {
-      const images = item.fields.images;
+      const images = item.fields?.images ?? [];
 
       const results = await Promise.allSettled(images.map(async (image) => {
         return axios.put(updateImageUrl(req.storeHash, itemId, image.imageId), {
           description: image.altText,
         }, { headers: { "X-Auth-Token": store.access_token, "Content-Type": "application/json" } });
       }));
+
+      const failedImages = images.filter((_, index) => results[index]?.status !== "fulfilled");
+      if (failedImages.length > 0) {
+        if (failedImages.length < images.length) {
+          await ItemSnapshot.updateOne(
+            { _id: item._id },
+            { $set: { "fields.images": failedImages } },
+          );
+        }
+        return res.status(500).json({ status: false, message: "Failed to restore some images" });
+      }
     }
     else if(itemType === "product") {
       const response = await axios.put(batchUpdateProductsUrl(req.storeHash), [{
@@ -109,7 +121,10 @@ const restoreItems = async (req, res) => {
       return res.status(400).json({ status: false, message: "Invalid target or item type" });
     }
 
-    await item.deleteOne();
+    await ItemSnapshot.updateOne(
+      { _id: item._id },
+      { $set: { is_restored: true, restoredAt: new Date() } },
+    );
     return res.status(200).json({ status: true, message: "Item restored successfully" });
 
   } catch (error) {
@@ -164,7 +179,7 @@ const bulkRestore = async (req, res) => {
       return res.status(400).json({ status: false, message: "Bulk job is not completed yet" });
     }
 
-    const snapshotCount = await ItemSnapshot.countDocuments({ jobHistoryId: jobId });
+    const snapshotCount = await ItemSnapshot.countDocuments({ jobHistoryId: jobId, is_restored: { $ne: true } });
     if (snapshotCount === 0) {
       return res.status(400).json({ status: false, message: "No snapshots available to restore" });
     }
@@ -258,6 +273,7 @@ const getRestoreJobs = async (req, res) => {
         $match: {
           storeHash: req.storeHash,
           jobHistoryId: { $exists: true, $ne: null },
+          is_restored: { $ne: true },
         },
       },
       {

@@ -22,7 +22,16 @@ const itemSnapshotSchema = new mongoose.Schema({
             altText : String,
         }]
     },
-    // is_restored: { type: Boolean, default: false },
+    updated: {
+        page_title: { type: String },
+        meta_description: { type: String },
+        images: [{
+            imageId: Number,
+            altText: String,
+        }],
+    },
+    is_restored: { type: Boolean, default: false },
+    restoredAt: { type: Date },
     //will be used later for if more than 1 snapshots are needed for a single item
 });       
 
@@ -36,6 +45,11 @@ itemSnapshotSchema.index(
 
 itemSnapshotSchema.index(
     { jobHistoryId: 1 }
+);
+
+itemSnapshotSchema.index(
+    { restoredAt: 1 },
+    { expireAfterSeconds: 7 * 24 * 60 * 60 }
 );
 
 const ItemSnapshot = mongoose.model("item_snapshot", itemSnapshotSchema);

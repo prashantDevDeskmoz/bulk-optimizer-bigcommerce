@@ -153,7 +153,20 @@ const saveImageSnapshot = async ({ lastUpdatedImageId, lastUpdatedProductId, fai
                                     operation.updateOne.update.$set.fields.images,
                                 ),
                             },
+                            ...(operation.updateOne.update.$set.updated
+                                ? {
+                                    updated: {
+                                        ...operation.updateOne.update.$set.updated,
+                                        images: filterSnapshotImages(
+                                            operation.updateOne.update.$set.updated.images,
+                                        ),
+                                    },
+                                }
+                                : {}),
                         },
+                        ...(operation.updateOne.update.$unset
+                            ? { $unset: operation.updateOne.update.$unset }
+                            : {}),
                     },
                 },
             };
@@ -172,6 +185,16 @@ const saveImageSnapshot = async ({ lastUpdatedImageId, lastUpdatedProductId, fai
                                 operation.insertOne.document.fields.images,
                             ),
                         },
+                        ...(operation.insertOne.document.updated
+                            ? {
+                                updated: {
+                                    ...operation.insertOne.document.updated,
+                                    images: filterSnapshotImages(
+                                        operation.insertOne.document.updated.images,
+                                    ),
+                                },
+                            }
+                            : {}),
                     },
                 },
             };
@@ -258,11 +281,32 @@ const updateSnapshotAndReturnUpdatablePayload = async ({storeHash, itemType, ite
 
 
 
+            let updated = {};
+            let imagesWithAlt = [];
+            if (target === "title") {
+                updated = { page_title: templateRenderer(template, item, itemType, storeName) };
+            } else if (target === "meta") {
+                updated = { meta_description: templateRenderer(template, item, itemType) };
+            } else if (target === "alt") {
+                imagesWithAlt = item?.images.map(image => {
+                    return {
+                        id: image.id,
+                        alt_text: templateRenderer(template, item, itemType) ?? "",
+                    }
+                }) ?? [];
+                updated = {
+                    images: imagesWithAlt.map((image) => ({
+                        imageId: image.id,
+                        altText: image.alt_text,
+                    })),
+                };
+            }
+
             if(slots.length === 0) {
-                bulkOperations.push({ insertOne: { document: { storeHash, itemId, bcChannelId, jobHistoryId: jobId, capturedAt: new Date(), fields: fieldData, itemType, target } } });
+                bulkOperations.push({ insertOne: { document: { storeHash, itemId, bcChannelId, jobHistoryId: jobId, capturedAt: new Date(), fields: fieldData, updated, itemType, target, is_restored: false } } });
             }
             else {
-                bulkOperations.push({ updateOne: { filter: { storeHash, itemId, target, itemType }, update: { $set: { fields: fieldData, capturedAt: new Date(), jobHistoryId: jobId, bcChannelId, itemType, target } } } });
+                bulkOperations.push({ updateOne: { filter: { storeHash, itemId, target, itemType }, update: { $set: { fields: fieldData, updated, capturedAt: new Date(), jobHistoryId: jobId, bcChannelId, itemType, target, is_restored: false }, $unset: { restoredAt: "" } } } });
             } 
             // else {
             //     const slot2 = slots.find(slot => slot.slot === 2);
@@ -270,22 +314,10 @@ const updateSnapshotAndReturnUpdatablePayload = async ({storeHash, itemType, ite
             //     bulkOperations.push({ updateOne: { filter: { storeHash, itemId, slot: 2, target, itemType }, update: { $set: { fields: fieldData, capturedAt: new Date(), jobHistoryId: jobId, bcChannelId, itemType, target, is_restored: false } } } });
             // }
 
-            let imagesWithAlt = [];
-            if(target === "alt") {
-                imagesWithAlt = item?.images.map(image => {
-                    return {
-                        id: image.id,
-                        alt_text: templateRenderer(template, item, itemType) ?? "",
-                    }
-                }) ?? [];
-            }
-
-            // add images with alt text if target is alt text 
             updatablePayload.push({       
                 [itemType === "category" ? "category_id" : "id"]: itemId,
-                ...(target === "title" ? 
-                    { page_title: templateRenderer(template, item, itemType, storeName) }
-                     : target === "meta" ? { meta_description: templateRenderer(template, item, itemType) }
+                ...(target === "title" ? { page_title: updated.page_title }
+                     : target === "meta" ? { meta_description: updated.meta_description }
                      : target === "alt" ? { images: imagesWithAlt } : {}),
             }); 
         }

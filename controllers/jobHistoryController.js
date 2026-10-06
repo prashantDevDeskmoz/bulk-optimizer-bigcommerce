@@ -109,6 +109,7 @@ const getJobHistories = async (req, res) => {
             $match: {
               storeHash: req.storeHash,
               jobHistoryId: { $in: completedJobIds },
+              is_restored: { $ne: true },
             },
           },
           { $group: { _id: "$jobHistoryId", count: { $sum: 1 } } },

@@ -17,6 +17,8 @@ const headers = (accessToken) => {
 
 const deleteRestoredSnapshots = async ({sourceJobId, itemData, target, lastUpdatedId, failedIds = [], failedImageKeys = new Set()}) => {
   if (target === "alt") {
+    const restoredAt = new Date();
+    const bulkOperations = [];
     for (const item of itemData) {
       const images = item.fields?.images ?? [];
       if (images.length === 0) continue;
@@ -24,14 +26,24 @@ const deleteRestoredSnapshots = async ({sourceJobId, itemData, target, lastUpdat
         failedImageKeys.has(`${item.itemId}-${img.imageId}`),
       );
       if (remainingImages.length === 0) {
-        await ItemSnapshot.deleteOne({ _id: item._id });
+        bulkOperations.push({
+          updateOne: {
+            filter: { _id: item._id },
+            update: { $set: { is_restored: true, restoredAt } },
+          },
+        });
       } else if (remainingImages.length < images.length) {
-        await ItemSnapshot.updateOne(
-          { _id: item._id },
-          { $set: { "fields.images": remainingImages } },
-        );
+        bulkOperations.push({
+          updateOne: {
+            filter: { _id: item._id },
+            update: { $set: { "fields.images": remainingImages } },
+          },
+        });
       }
       // all images failed → snapshot unchanged
+    }
+    if (bulkOperations.length > 0) {
+      await ItemSnapshot.bulkWrite(bulkOperations);
     }
     return;
   }
@@ -51,15 +63,18 @@ const deleteRestoredSnapshots = async ({sourceJobId, itemData, target, lastUpdat
     .filter((id) => !failedSet.has(id));
 
   if (restoredItemIds.length > 0) {
-    await ItemSnapshot.deleteMany({
-      jobHistoryId: sourceJobId,
-      itemId: { $in: restoredItemIds },
-    });
+    await ItemSnapshot.updateMany(
+      {
+        jobHistoryId: sourceJobId,
+        itemId: { $in: restoredItemIds },
+      },
+      { $set: { is_restored: true, restoredAt: new Date() } },
+    );
   }
 };
 
 const getBatchUpdates = async ({sourceJobId, lastId, limit = 250}) => {
-  const query = { jobHistoryId: sourceJobId };
+  const query = { jobHistoryId: sourceJobId, is_restored: { $ne: true } };
   if (lastId) query._id = { $gt: lastId };
 
   const batchUpdates = await ItemSnapshot.find(query).sort({ _id: 1 }).limit(limit).lean();

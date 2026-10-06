@@ -88,7 +88,6 @@ const sendInstallNotificationEmail = async (details = {}) => {
         await transporter.sendMail({
             from: process.env.EMAIL_FROM,
             to: "info@seokart.com",
-            cc: "prashantsingh.deskmoz@gmail.com",
             replyTo: details?.email || undefined,  // merchant email
             subject: `New install: ${safe.name} (${safe.storeHash})`,
             html: buildNotificationHtml({

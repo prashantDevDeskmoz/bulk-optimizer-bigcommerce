@@ -9,6 +9,7 @@ const {
   getClients,
   getClientById,
   getAdminSecret,
+  getLogs,
 } = require("../controllers/adminController");
 
 const router = Router();
@@ -26,7 +27,10 @@ const requireAdmin = (req, res, next) => {
     }
     req.admin = payload;
     next();
-  } catch {
+  } catch (err) {
+    if (err.code === "ADMIN_NOT_CONFIGURED") {
+      return res.status(500).json({ status: false, message: "Admin auth is not configured" });
+    }
     return res.status(401).json({ status: false, message: "Invalid or expired admin token" });
   }
 };
@@ -38,5 +42,6 @@ router.put("/plans/:id", requireAdmin, updatePlan);
 router.get("/workers", requireAdmin, getWorkersStatus);
 router.get("/clients", requireAdmin, getClients);
 router.get("/clients/:id", requireAdmin, getClientById);
+router.get("/logs", requireAdmin, getLogs);
 
 module.exports = router;

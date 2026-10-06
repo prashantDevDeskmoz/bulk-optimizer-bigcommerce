@@ -1,16 +1,68 @@
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
+const { LOG_DIR } = require("../utils/logger");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
 const JobHistory = require("../models/JobHistory");
 const { QueueManager, QUEUE_NAMES } = require("../bullmq/queueManager");
+const redisClient = require("../redis");
 
 const queueManager = new QueueManager();
 const ADMIN_TTL_SECONDS = 60 * 60 * 12; // 12 hours
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 8;
+const loginFailures = new Map();
+
+function configError(message) {
+  const err = new Error(message);
+  err.code = "ADMIN_NOT_CONFIGURED";
+  return err;
+}
+
+function assertAdminConfig() {
+  const user = process.env.ADMIN_USERNAME || "";
+  const pass = process.env.ADMIN_PASSWORD || "";
+  const secret = process.env.ADMIN_JWT_SECRET || "";
+  if (!user || pass.length < 12 || secret.length < 32) {
+    console.error(
+      "[admin] Refusing to start. Set ADMIN_USERNAME, ADMIN_PASSWORD (12+ characters), and ADMIN_JWT_SECRET (32+ characters).",
+    );
+    process.exit(1);
+  }
+}
 
 function getAdminSecret() {
-  return process.env.ADMIN_JWT_SECRET || process.env.SESSION_JWT_SECRET || process.env.CLIENT_SECRET;
+  const secret = process.env.ADMIN_JWT_SECRET || "";
+  if (secret.length < 32) throw configError("Admin auth is not configured");
+  return secret;
 }
+
+function secretsMatch(input, expected) {
+  const left = crypto.createHash("sha256").update(String(input ?? ""), "utf8").digest();
+  const right = crypto.createHash("sha256").update(String(expected ?? ""), "utf8").digest();
+  return crypto.timingSafeEqual(left, right);
+}
+
+function clientIp(req) {
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function recentFailures(ip) {
+  const now = Date.now();
+  const recent = (loginFailures.get(ip) || []).filter((t) => now - t < LOGIN_WINDOW_MS);
+  if (recent.length) loginFailures.set(ip, recent);
+  else loginFailures.delete(ip);
+  return recent;
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+assertAdminConfig();
 
 /** App load URL using last BigCommerce signed_payload_jwt saved on the store */
 function buildLastAccessUrl(lastAccessedPayload) {
@@ -21,16 +73,28 @@ function buildLastAccessUrl(lastAccessedPayload) {
 }
 
 const adminLogin = async (req, res) => {
+  const ip = clientIp(req);
   try {
-    const { username, password } = req.body;
-    const adminUser = process.env.ADMIN_USERNAME || "admin";
-    const adminPass = process.env.ADMIN_PASSWORD || "admin";
+    if (recentFailures(ip).length >= LOGIN_MAX_FAILURES) {
+      return res.status(429).json({ status: false, message: "Too many login attempts. Try again later." });
+    }
 
-    if (!username || !password || username !== adminUser || password !== adminPass) {
+    const adminUser = process.env.ADMIN_USERNAME || "";
+    const adminPass = process.env.ADMIN_PASSWORD || "";
+    if (adminPass.length < 12) throw configError("Admin auth is not configured");
+
+    const { username, password } = req.body || {};
+    const userOk = secretsMatch(username, adminUser);
+    const passOk = secretsMatch(password, adminPass);
+    if (!userOk || !passOk) {
+      const recent = recentFailures(ip);
+      recent.push(Date.now());
+      loginFailures.set(ip, recent);
       return res.status(401).json({ status: false, message: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ role: "admin", username }, getAdminSecret(), {
+    loginFailures.delete(ip);
+    const token = jwt.sign({ role: "admin", username: adminUser }, getAdminSecret(), {
       expiresIn: ADMIN_TTL_SECONDS,
     });
 
@@ -41,7 +105,8 @@ const adminLogin = async (req, res) => {
     });
   } catch (error) {
     console.error("[adminLogin]", error.message);
-    return res.status(500).json({ status: false, message: error.message });
+    const message = error.code === "ADMIN_NOT_CONFIGURED" ? "Admin auth is not configured" : "Internal server error";
+    return res.status(500).json({ status: false, message });
   }
 };
 
@@ -85,27 +150,31 @@ const getDashboard = async (req, res) => {
 
     let queues = [];
     let redis = { status: "ok", message: "Connected" };
-    try {
-      const names = Object.values(QUEUE_NAMES);
-      queues = await Promise.all(
-        names.map(async (name) => {
-          const queue = queueManager.queues[name];
-          const counts = await queue.getJobCounts(
-            "waiting",
-            "active",
-            "completed",
-            "failed",
-            "delayed",
-            "paused",
-          );
-          return { name, ...counts };
-        }),
-      );
-    } catch (err) {
-      redis = {
-        status: "error",
-        message: err.message || "Redis unavailable",
-      };
+    if (redisClient.status !== "ready") {
+      redis = { status: "error", message: `Redis ${redisClient.status}` };
+    } else {
+      try {
+        const names = Object.values(QUEUE_NAMES);
+        queues = await Promise.all(
+          names.map(async (name) => {
+            const queue = queueManager.queues[name];
+            const counts = await queue.getJobCounts(
+              "waiting",
+              "active",
+              "completed",
+              "failed",
+              "delayed",
+              "paused",
+            );
+            return { name, ...counts };
+          }),
+        );
+      } catch (err) {
+        redis = {
+          status: "error",
+          message: err.message || "Redis unavailable",
+        };
+      }
     }
 
     const queueTotals = queues.reduce(
@@ -202,20 +271,27 @@ const plan = await Plan.findByIdAndUpdate(id, { $set: update }, { returnDocument
 
 const getWorkersStatus = async (req, res) => {
   try {
+    if (redisClient.status !== "ready") {
+      return res.status(503).json({ status: false, message: `Redis ${redisClient.status}` });
+    }
     const names = Object.values(QUEUE_NAMES);
     const data = await Promise.all(
       names.map(async (name) => {
         const queue = queueManager.queues[name];
         try {
-          const counts = await queue.getJobCounts(
-            "waiting",
-            "active",
-            "completed",
-            "failed",
-            "delayed",
-            "paused",
-          );
-          return { name, ...counts };
+          const [counts, workers, failedJobs] = await Promise.all([
+            queue.getJobCounts("waiting", "active", "completed", "failed", "delayed", "paused"),
+            queue.getWorkersCount().catch(() => null),
+            queue.getFailed(0, 4),
+          ]);
+          const recentFailed = failedJobs.filter(Boolean).map((job) => ({
+            id: job.id,
+            storeHash: job.data?.storeHash,
+            failedReason: job.failedReason,
+            attemptsMade: job.attemptsMade,
+            finishedOn: job.finishedOn,
+          }));
+          return { name, ...counts, workers, recentFailed };
         } catch (err) {
           return {
             name,
@@ -242,7 +318,7 @@ const getClients = async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-    const search = String(req.query.search || "").trim();
+    const search = String(req.query.search || "").trim().slice(0, 100);
     const status = req.query.status; // active | inactive | all
     const planFilter = String(req.query.plan || "all").trim(); // free | pro | all
 
@@ -251,11 +327,12 @@ const getClients = async (req, res) => {
     if (status === "inactive") filter.is_active = false;
     if (planFilter === "free" || planFilter === "pro") filter.plan = planFilter;
     if (search) {
+      const pattern = escapeRegex(search);
       filter.$or = [
-        { store_hash: { $regex: search, $options: "i" } },
-        { store_name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { store_domain: { $regex: search, $options: "i" } },
+        { store_hash: { $regex: pattern, $options: "i" } },
+        { store_name: { $regex: pattern, $options: "i" } },
+        { email: { $regex: pattern, $options: "i" } },
+        { store_domain: { $regex: pattern, $options: "i" } },
       ];
     }
 
@@ -268,7 +345,6 @@ const getClients = async (req, res) => {
       summaryFree,
       summaryPro,
       proPlan,
-      jobsByStore,
     ] = await Promise.all([
       Store.find(filter)
         .sort({ updatedAt: -1 })
@@ -285,10 +361,22 @@ const getClients = async (req, res) => {
       Store.countDocuments({ plan: "free" }),
       Store.countDocuments({ plan: "pro" }),
       Plan.findOne({ name: "pro" }).lean(),
-      JobHistory.aggregate([
-        { $group: { _id: "$storeHash", jobs: { $sum: 1 }, failed: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } }, processed: { $sum: "$processedItems" } } },
-      ]),
     ]);
+
+    const storeHashes = clients.map((c) => c.store_hash);
+    const jobsByStore = storeHashes.length
+      ? await JobHistory.aggregate([
+          { $match: { storeHash: { $in: storeHashes } } },
+          {
+            $group: {
+              _id: "$storeHash",
+              jobs: { $sum: 1 },
+              failed: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } },
+              processed: { $sum: "$processedItems" },
+            },
+          },
+        ])
+      : [];
 
     const jobsMap = Object.fromEntries(
       jobsByStore.map((j) => [j._id, { jobs: j.jobs, failed: j.failed, processed: j.processed }]),
@@ -311,10 +399,11 @@ const getClients = async (req, res) => {
 
     const data = clients.map((c) => {
       const stats = jobsMap[c.store_hash] || { jobs: 0, failed: 0, processed: 0 };
+      const { last_accessed_payload, ...rest } = c;
       return {
-        ...c,
+        ...rest,
         installStatus: c.is_active ? "installed" : "uninstalled",
-        last_access_url: buildLastAccessUrl(c.last_accessed_payload),
+        last_access_url: buildLastAccessUrl(last_accessed_payload),
         last_access_at: c.updatedAt,
         jobStats: stats,
       };
@@ -339,12 +428,13 @@ const getClientById = async (req, res) => {
       return res.status(404).json({ status: false, message: "Client not found" });
     }
 
+    const { last_accessed_payload, ...safeClient } = client;
     return res.status(200).json({
       status: true,
       data: {
-        ...client,
+        ...safeClient,
         installStatus: client.is_active ? "installed" : "uninstalled",
-        last_access_url: buildLastAccessUrl(client.last_accessed_payload),
+        last_access_url: buildLastAccessUrl(last_accessed_payload),
         last_access_at: client.updatedAt,
       },
     });
@@ -354,7 +444,51 @@ const getClientById = async (req, res) => {
   }
 };
 
+const getLogType = (entry) =>
+  entry.message === "Request failed" ? "request" : entry.message?.includes("Job failed") ? "job" : "system";
+const getLogLevel = (entry) => (entry.status && entry.status < 500 ? "warning" : "error");
+
+const getLogs = async (req, res) => {
+  try {
+    const dates = (await fs.promises.readdir(LOG_DIR))
+      .map((name) => name.match(/^error-(\d{4}-\d{2}-\d{2})\.log$/)?.[1])
+      .filter(Boolean)
+      .sort()
+      .reverse();
+    const date = dates.includes(req.query.date) ? req.query.date : dates[0];
+    if (!date) return res.status(200).json({ status: true, dates, date: null, data: [] });
+
+    const storeHash = String(req.query.storeHash || "").trim();
+    const { type = "", level = "" } = req.query;
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+
+    const lines = (await fs.promises.readFile(path.join(LOG_DIR, `error-${date}.log`), "utf8")).split("\n");
+    const data = [];
+    for (let i = lines.length - 1; i >= 0 && data.length < limit; i--) {
+      if (!lines[i]) continue;
+      let entry;
+      try {
+        entry = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      entry.type = getLogType(entry);
+      entry.level = getLogLevel(entry);
+      if (storeHash && !entry.storeHash?.includes(storeHash)) continue;
+      if (type && entry.type !== type) continue;
+      if (level && entry.level !== level) continue;
+      data.push(entry);
+    }
+
+    return res.status(200).json({ status: true, dates, date, data });
+  } catch (error) {
+    console.error("[getLogs]", error.message);
+    return res.status(500).json({ status: false, message: error.message });
+  }
+};
+
 module.exports = {
+  getLogs,
   adminLogin,
   getDashboard,
   getPlans,

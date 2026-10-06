@@ -601,3 +601,11 @@ const bulkOptimizedImagesWorkerv2 = new Worker(
     concurrency: 1,
    },
  );
+
+module.exports = {
+  bulkOptimizedProductWorker,
+  bulkOptimizedCategoriesWorker,
+  bulkOptimizedBrandsWorker,
+  bulkOptimizedImagesWorker,
+  bulkOptimizedImagesWorkerv2,
+};

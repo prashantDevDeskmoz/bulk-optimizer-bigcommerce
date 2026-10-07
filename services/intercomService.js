@@ -88,7 +88,7 @@ const syncStoreToIntercom = async (storeHash) => {
       {
         user_id: intercomUserId,
         email: store.email || undefined,
-        name: store.email ||store.store_name || undefined,
+        name: null,
         custom_attributes: customAttributes,
       },
       {

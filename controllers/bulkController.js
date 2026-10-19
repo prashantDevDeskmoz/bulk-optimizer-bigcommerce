@@ -65,13 +65,13 @@ const updateBulk = async (req, res) => {
         console.log("canBeUpdated:::::::::::::::::::::::::::::::::::::", canBeUpdated, "planLimitReached:::::::::::::::::::::::::::::::::::::", planLimitReached);
 
         const accessToken = store.access_token;
-
+        const allowedCruiseControl = store.plan === "free" ? false : !!cruiseControl;
 
         const jobData = {
             storeHash: req.storeHash,
             target,
             template,
-            cruiseControl,
+            cruiseControl: allowedCruiseControl,
             accessToken,
             bcChannelId,
             blanksOnly,
@@ -120,9 +120,16 @@ const updateCruiseControl = async (req, res) => {
         const store = await Store.findByHash(req.storeHash);
         if (!store) {return res.status(404).json({ status: false, message: "Store not found" })}
 
+        if (cruiseControl && store.plan === "free") {
+            return res.status(403).json({
+                status: false,
+                message: "Auto Seo is available on the Pro plan. Upgrade to enable it.",
+            });
+        }
+
         await Template.findOneAndUpdate(
             { storeId: store._id, bcChannelId, applyTo, target },
-            { cruiseControl },
+            { cruiseControl: !!cruiseControl },
             { returnDocument: "after", upsert: true }
         );
 

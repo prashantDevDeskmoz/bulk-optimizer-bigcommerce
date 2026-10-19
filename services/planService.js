@@ -49,16 +49,19 @@ const getPlanAndCheckLimit = async (store) => {
         ]);
 
 
-        const totalItemsProcessed = aggregateResult[0]?.totalItems || 0;
+        const manualCount = store.manualUsage?.cycleStart?.getTime() === cycleStart.getTime()
+            ? store.manualUsage.count || 0
+            : 0;
+        const totalItemsProcessed = (aggregateResult[0]?.totalItems || 0) + manualCount;
 
         if (plan.itemLimit == null) {
-            return { planLimitReached: false, usage: totalItemsProcessed, canBeUpdated: null, planLimit: null, planName: store.plan };
+            return { planLimitReached: false, usage: totalItemsProcessed, canBeUpdated: null, planLimit: null, planName: store.plan, cycleStart };
         }
 
         const planLimitReached = totalItemsProcessed >= plan.itemLimit;
         const canBeUpdated = Math.max(0, plan.itemLimit - totalItemsProcessed);
 
-        return { planLimitReached, usage: totalItemsProcessed, canBeUpdated, planLimit: plan.itemLimit, planName: store.plan };
+        return { planLimitReached, usage: totalItemsProcessed, canBeUpdated, planLimit: plan.itemLimit, planName: store.plan, cycleStart };
 
     } catch (error) {
         console.error(error);

@@ -1,12 +1,21 @@
 const axios = require("axios");
 const Store = require("../models/Store");
 const Channel = require("../models/Channel");
+const Template = require("../models/Template");
+const { templateRenderer } = require("../bullmq/workerService");
 
 const {
+  listBrandsUrl,
   listProductsUrl,
   listTreeCategoriesUrl,
   listTreesUrl,
 } = require("../utils/bcApi");
+
+const PRODUCT_SORTS = {
+  latest: { sort: "id", direction: "desc" },
+  oldest: { sort: "id", direction: "asc" },
+  name: { sort: "name", direction: "asc" },
+};
 
 async function fetchTreeIdsForChannel(storeHash, bcChannelId, headers) {
   const { data } = await axios.get(listTreesUrl(storeHash), {
@@ -134,4 +143,95 @@ const getChannelPreviewSamples = async (req, res) => {
   }
 };
 
-module.exports = { getChannelPreviewSamples };
+/**
+ * GET /preview/products?bcChannelId=&page=&limit=&search=&sort=
+ * One page of channel products with current SEO and what the saved templates would set.
+ */
+const getProductsPreview = async (req, res) => {
+  try {
+    const { bcChannelId, search = "", sort = "latest" } = req.query;
+    if (!bcChannelId) {
+      return res.status(400).json({ status: false, message: "bcChannelId query parameter is required" });
+    }
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+
+    const store = await Store.findByHash(req.storeHash);
+    if (!store?.access_token) {
+      return res.status(404).json({ status: false, message: "Store not found" });
+    }
+
+    const templates = await Template.find({
+      storeId: store._id,
+      bcChannelId: String(bcChannelId),
+      applyTo: "products",
+      target: { $in: ["title", "meta"] },
+    })
+      .select("target template isDefault")
+      .lean();
+    const titleTemplate = templates.find((t) => t.target === "title");
+    const metaTemplate = templates.find((t) => t.target === "meta");
+
+    const headers = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Auth-Token": store.access_token,
+    };
+
+    const { data } = await axios.get(listProductsUrl(req.storeHash, "primary_image"), {
+      headers,
+      params: {
+        page,
+        limit,
+        "channel_id:in": bcChannelId,
+        include_fields: "id,name,sku,price,type,brand_id,mpn,condition,page_title,meta_description,custom_url",
+        ...(search.trim() ? { keyword: search.trim() } : {}),
+        ...(PRODUCT_SORTS[sort] ?? PRODUCT_SORTS.latest),
+      },
+    });
+    const products = Array.isArray(data?.data) ? data.data : [];
+
+    const usesBrand = [titleTemplate, metaTemplate].some((t) => t?.template?.includes("[[brand]]"));
+    const brandIds = usesBrand ? [...new Set(products.map((p) => p.brand_id).filter(Boolean))] : [];
+    if (brandIds.length > 0) {
+      const { data: brandData } = await axios.get(listBrandsUrl(req.storeHash), {
+        headers,
+        params: { "id:in": brandIds.join(","), limit: brandIds.length, include_fields: "id,name" },
+      });
+      const brandNameById = Object.fromEntries((brandData?.data ?? []).map((b) => [b.id, b.name ?? ""]));
+      for (const product of products) {
+        product.brand_name = brandNameById[product.brand_id] ?? "";
+      }
+    }
+
+    const storeName = titleTemplate?.isDefault ? store.store_name : null;
+    const rows = products.map((product) => ({
+      id: product.id,
+      name: product.name ?? "",
+      sku: product.sku ?? "",
+      imageUrl: product.primary_image?.url_thumbnail ?? "",
+      pageUrl: product.custom_url?.url ?? "",
+      currentTitle: product.page_title ?? "",
+      currentMeta: product.meta_description ?? "",
+      templateTitle: titleTemplate?.template ? templateRenderer(titleTemplate.template, product, "product", storeName) : "",
+      templateMeta: metaTemplate?.template ? templateRenderer(metaTemplate.template, product, "product") : "",
+    }));
+
+    return res.status(200).json({
+      status: true,
+      data: rows,
+      total: data?.meta?.pagination?.total ?? rows.length,
+      page,
+      limit,
+    });
+  } catch (error) {
+    const status = error.response?.status;
+    const bc = error.response?.data;
+    console.error("getProductsPreview:", error.message, bc || "");
+    return res
+      .status(status && status >= 400 && status < 600 ? status : 500)
+      .json({ status: false, message: bc?.title || bc?.message || error.message });
+  }
+};
+
+module.exports = { getChannelPreviewSamples, getProductsPreview };

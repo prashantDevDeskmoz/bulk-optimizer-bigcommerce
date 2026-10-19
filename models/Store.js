@@ -84,6 +84,10 @@ const storeSchema = new mongoose.Schema(
         type: String,
         default: null,
       },
+      manualUsage: {
+        cycleStart: { type: Date, default: null },
+        count: { type: Number, default: 0 },
+      },
     },
     {
       timestamps: true,

@@ -7,6 +7,7 @@ const { LOG_DIR } = require("../utils/logger");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
 const JobHistory = require("../models/JobHistory");
+const ItemSnapshot = require("../models/ItemSnapshot");
 const { QueueManager, QUEUE_NAMES } = require("../bullmq/queueManager");
 const redisClient = require("../redis");
 
@@ -351,7 +352,7 @@ const getClients = async (req, res) => {
         .skip((page - 1) * limit)
         .limit(limit)
         .select(
-          "store_hash email store_name store_domain store_url is_active installed_at uninstalled_at plan updatedAt createdAt planPurchasedAt paypalSubscriptionId trialDaysRemaining last_accessed_payload",
+          "store_hash email store_name store_domain store_url is_active installed_at uninstalled_at plan updatedAt createdAt planPurchasedAt paypalSubscriptionId trialDaysRemaining last_accessed_payload manualUsage",
         )
         .lean(),
       Store.countDocuments(filter),
@@ -399,13 +400,18 @@ const getClients = async (req, res) => {
 
     const data = clients.map((c) => {
       const stats = jobsMap[c.store_hash] || { jobs: 0, failed: 0, processed: 0 };
-      const { last_accessed_payload, ...rest } = c;
+      const manualProcessed = c.manualUsage?.count || 0;
+      const { last_accessed_payload, manualUsage, ...rest } = c;
       return {
         ...rest,
         installStatus: c.is_active ? "installed" : "uninstalled",
         last_access_url: buildLastAccessUrl(last_accessed_payload),
         last_access_at: c.updatedAt,
-        jobStats: stats,
+        jobStats: {
+          ...stats,
+          manual: manualProcessed,
+          processed: (stats.processed || 0) + manualProcessed,
+        },
       };
     });
 
@@ -428,6 +434,23 @@ const getClientById = async (req, res) => {
       return res.status(404).json({ status: false, message: "Client not found" });
     }
 
+    const [recentJobs, manualUpdates] = await Promise.all([
+      JobHistory.find({ storeHash: client.store_hash })
+        .sort({ startedAt: -1 })
+        .limit(20)
+        .select("jobId resource target status totalItems processedItems template startedAt completedAt cruiseControl")
+        .lean(),
+      ItemSnapshot.find({
+        storeHash: client.store_hash,
+        jobHistoryId: { $regex: /^manual-/ },
+        is_restored: { $ne: true },
+      })
+        .sort({ capturedAt: -1 })
+        .limit(50)
+        .select("itemId target capturedAt bcChannelId jobHistoryId fields.name fields.page_title fields.meta_description updated")
+        .lean(),
+    ]);
+
     const { last_accessed_payload, ...safeClient } = client;
     return res.status(200).json({
       status: true,
@@ -436,6 +459,8 @@ const getClientById = async (req, res) => {
         installStatus: client.is_active ? "installed" : "uninstalled",
         last_access_url: buildLastAccessUrl(last_accessed_payload),
         last_access_at: client.updatedAt,
+        recentJobs,
+        manualUpdates,
       },
     });
   } catch (error) {

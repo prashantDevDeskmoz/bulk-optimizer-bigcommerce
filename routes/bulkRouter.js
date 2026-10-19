@@ -2,6 +2,7 @@ const { Router } = require("express");
 const { requireAppSession } = require("../middleware/requireAppSession");
 const {
   updateBulk,
+  updateProducts,
   updateCruiseControl,
   saveTemplates,
   getAllTemplates,
@@ -11,6 +12,7 @@ const {
 const router = Router();
 
 router.post("/update", requireAppSession, updateBulk);
+router.post("/update-products", requireAppSession, updateProducts);
 router.post("/cruise-control", requireAppSession, updateCruiseControl);
 router.post("/save-templates", requireAppSession, saveTemplates);
 router.get("/get-all-templates", requireAppSession, getAllTemplates);

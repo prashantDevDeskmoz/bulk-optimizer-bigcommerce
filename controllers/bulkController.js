@@ -6,8 +6,13 @@ const Channel = require("../models/Channel");
 const Template = require("../models/Template");
 const queueManager = new QueueManager();
 const axios = require("axios");
+const ItemSnapshot = require("../models/ItemSnapshot");
 const { getPlanAndCheckLimit } = require("../services/planService");
-const { listProductsUrl } = require("../utils/bcApi");
+const { listProductsUrl, batchUpdateProductsUrl } = require("../utils/bcApi");
+const { putWithRetry, PRODUCT_BATCH_LIMIT } = require("../bullmq/workerService");
+
+const PRODUCT_TARGET_FIELDS = { title: "page_title", meta: "meta_description" };
+const MAX_MANUAL_PRODUCTS = 50;
 
 const updateBulk = async (req, res) => {
     try {
@@ -217,8 +222,167 @@ const getDashboardInfo = async (req, res) => {
     }
 }
 
+const updateProducts = async (req, res) => {
+    const { bcChannelId, products } = req.body;
+    if (!Array.isArray(products) || products.length === 0 || products.length > MAX_MANUAL_PRODUCTS) {
+        return res.status(400).json({ status: false, message: `Send between 1 and ${MAX_MANUAL_PRODUCTS} products` });
+    }
+
+    try {
+        const store = await Store.findByHash(req.storeHash);
+        if (!store || !store.is_active) {return res.status(404).json({ status: false, message: "Store not found or is not active" })}
+
+        const [runningJob, pendingRestore, { canBeUpdated, cycleStart }] = await Promise.all([
+            JobHistory.exists({ storeHash: req.storeHash, status: "pending" }),
+            RestoreHistory.exists({ storeHash: req.storeHash, resource: "products", status: "pending" }),
+            getPlanAndCheckLimit(store),
+        ]);
+        if (runningJob) {
+            return res.status(400).json({ status: false, message: "A bulk update is already in progress. Please wait for it to complete." });
+        }
+        if (pendingRestore) {
+            return res.status(400).json({ status: false, message: "A restore is in progress for products. Wait for it to finish before updating." });
+        }
+
+        const headers = {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-Auth-Token": store.access_token,
+        };
+
+        const { data } = await axios.get(listProductsUrl(req.storeHash), {
+            headers,
+            params: {
+                "id:in": products.map((p) => Number(p.id)).join(","),
+                limit: products.length,
+                include_fields: "id,name,page_title,meta_description,custom_url",
+            },
+        });
+        const currentById = Object.fromEntries((data?.data ?? []).map((p) => [p.id, p]));
+
+        const changes = [];
+        for (const product of products) {
+            const current = currentById[Number(product.id)];
+            if (!current) continue;
+            const change = { id: current.id };
+            for (const field of Object.values(PRODUCT_TARGET_FIELDS)) {
+                if (typeof product[field] === "string" && product[field] !== (current[field] ?? "")) {
+                    change[field] = product[field];
+                }
+            }
+            if (Object.keys(change).length > 1) changes.push(change);
+        }
+        if (changes.length === 0) {
+            return res.status(200).json({ status: true, message: "Nothing to update", data: [], failedIds: [] });
+        }
+
+        const changesByTarget = Object.fromEntries(
+            Object.entries(PRODUCT_TARGET_FIELDS).map(([target, field]) => [target, changes.filter((c) => c[field] !== undefined)]),
+        );
+        const targets = Object.keys(changesByTarget).filter((target) => changesByTarget[target].length > 0);
+        const itemCount = targets.reduce((sum, target) => sum + changesByTarget[target].length, 0);
+        if (canBeUpdated !== null && itemCount > canBeUpdated) {
+            return res.status(400).json({
+                status: false,
+                message: canBeUpdated === 0
+                    ? "You have reached your monthly plan limit. Upgrade your plan to continue."
+                    : `You can update ${canBeUpdated} more item(s) this month, but this update needs ${itemCount}. Upgrade your plan or update fewer products.`,
+            });
+        }
+
+        const failed = {};
+        for (let i = 0; i < changes.length; i += PRODUCT_BATCH_LIMIT) {
+            const chunk = changes.slice(i, i + PRODUCT_BATCH_LIMIT);
+            try {
+                await putWithRetry(batchUpdateProductsUrl(req.storeHash), chunk, headers);
+            } catch (batchError) {
+                if (batchError?.response?.status !== 422) {
+                    const message = JSON.stringify(batchError?.response?.data ?? batchError.message);
+                    for (const change of chunk) failed[change.id] = message;
+                    continue;
+                }
+                for (const change of chunk) {
+                    try {
+                        await putWithRetry(batchUpdateProductsUrl(req.storeHash), [change], headers);
+                    } catch (itemError) {
+                        failed[change.id] = JSON.stringify(itemError?.response?.data ?? itemError.message);
+                    }
+                }
+            }
+        }
+
+        const capturedAt = new Date();
+        const jobHistoryId = `manual-${capturedAt.getTime()}-${req.storeHash}`;
+        const snapshotOperations = [];
+        for (const target of targets) {
+            const field = PRODUCT_TARGET_FIELDS[target];
+            for (const change of changesByTarget[target]) {
+                if (failed[change.id]) continue;
+                const current = currentById[change.id];
+                snapshotOperations.push({
+                    updateOne: {
+                        filter: { storeHash: req.storeHash, itemType: "product", target, itemId: change.id },
+                        update: {
+                            $set: {
+                                jobHistoryId,
+                                bcChannelId: Number(bcChannelId) || null,
+                                capturedAt,
+                                is_restored: false,
+                                fields: {
+                                    name: current.name ?? "",
+                                    page_title: current.page_title ?? "",
+                                    meta_description: current.meta_description ?? "",
+                                    item_url: current.custom_url?.url ?? "",
+                                    images: [],
+                                },
+                                updated: { [field]: change[field] },
+                            },
+                            $unset: { restoredAt: "" },
+                        },
+                        upsert: true,
+                    },
+                });
+            }
+        }
+        if (snapshotOperations.length > 0) {
+            await Promise.all([
+                ItemSnapshot.bulkWrite(snapshotOperations),
+                Store.updateOne({ _id: store._id }, [{
+                    $set: {
+                        manualUsage: {
+                            cycleStart,
+                            count: {
+                                $cond: [
+                                    { $eq: ["$manualUsage.cycleStart", cycleStart] },
+                                    { $add: [{ $ifNull: ["$manualUsage.count", 0] }, snapshotOperations.length] },
+                                    snapshotOperations.length,
+                                ],
+                            },
+                        },
+                    },
+                }], { updatePipeline: true }),
+            ]);
+        }
+
+        const updated = changes.filter((c) => !failed[c.id]);
+        const failedIds = Object.keys(failed).map(Number);
+        return res.status(200).json({
+            status: updated.length > 0,
+            message: failedIds.length === 0
+                ? `${updated.length} product(s) updated`
+                : `${updated.length} product(s) updated, ${failedIds.length} failed`,
+            data: updated,
+            failedIds,
+        });
+    } catch (error) {
+        console.error("[updateProducts] error:", error?.response?.data ?? error.message);
+        return res.status(500).json({ status: false, message: error?.response?.data?.title ?? error.message });
+    }
+};
+
 module.exports = {
     updateBulk,
+    updateProducts,
     updateCruiseControl,
     saveTemplates,
     getAllTemplates,

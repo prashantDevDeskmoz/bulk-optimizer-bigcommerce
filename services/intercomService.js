@@ -2,6 +2,7 @@ const axios = require("axios");
 const crypto = require("crypto");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
+const { logError } = require("../utils/logger");
 
 const INTERCOM_USERS_URL = "https://api.intercom.io/users";
 
@@ -106,6 +107,7 @@ const syncStoreToIntercom = async (storeHash) => {
   } catch (error) {
     const detail = error?.response?.data || error.message;
     console.error("syncStoreToIntercom:", detail);
+    logError("syncStoreToIntercom failed", { error, storeHash });
     return false;
   }
 };

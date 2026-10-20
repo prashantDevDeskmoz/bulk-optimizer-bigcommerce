@@ -3,6 +3,7 @@ const { requireAppSession } = require("../middleware/requireAppSession");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
 const { syncStoreToIntercom } = require("../services/intercomService");
+const { sendPaypalWebhookNotificationEmail } = require("../services/emailService");
 
 const router = Router();
 
@@ -158,22 +159,91 @@ router.post("/webhook", raw({ type: "application/json" }), async (req, res) => {
     if (event.event_type === "BILLING.SUBSCRIPTION.ACTIVATED") {
       console.warn("BILLING.SUBSCRIPTION.ACTIVATED");
       const storeHash = event.resource.custom_id; // the storeHash you passed in create-subscription
-      await Store.findOneAndUpdate(
-        { store_hash: storeHash },
-        { plan: "pro", planPurchasedAt: new Date(), paypalSubscriptionId: event.resource.id }
-      );
+      const resource = event.resource || {};
+      const subscriber = resource.subscriber || {};
+      const [store, plan] = await Promise.all([
+        Store.findOneAndUpdate(
+          { store_hash: storeHash },
+          { plan: "pro", planPurchasedAt: new Date(), paypalSubscriptionId: resource.id },
+          { returnDocument: "after" },
+        ),
+        Plan.findOne({ name: "pro" }).select("price").lean(),
+      ]);
       await syncStoreToIntercom(storeHash);
+      const lastPayment = resource.billing_info?.last_payment?.amount;
+      await sendPaypalWebhookNotificationEmail({
+        eventType: event.event_type,
+        storeHash,
+        storeName: store?.store_name,
+        storeEmail: store?.email,
+        storeUrl: store?.store_url || store?.store_domain,
+        subscriptionId: resource.id,
+        planId: resource.plan_id,
+        status: resource.status,
+        price: lastPayment?.value ?? plan?.price,
+        currency: lastPayment?.currency_code || "USD",
+        payerEmail: subscriber.email_address,
+        payerName: [subscriber.name?.given_name, subscriber.name?.surname].filter(Boolean).join(" "),
+        nextBillingTime: resource.billing_info?.next_billing_time,
+      });
     }
 
-    if (event.event_type === "BILLING.SUBSCRIPTION.CANCELLED") {
-      const cancelled = await Store.findOneAndUpdate(
-        { paypalSubscriptionId: event.resource.id },
+    const downgradeEvents = [
+      "BILLING.SUBSCRIPTION.CANCELLED",
+      "BILLING.SUBSCRIPTION.SUSPENDED",
+      "BILLING.SUBSCRIPTION.EXPIRED",
+    ];
+    if (downgradeEvents.includes(event.event_type)) {
+      const resource = event.resource || {};
+      const subscriber = resource.subscriber || {};
+      const store = await Store.findOneAndUpdate(
+        { paypalSubscriptionId: resource.id },
         { plan: "free" },
         { returnDocument: "after" },
       );
-      if (cancelled?.store_hash) {
-        await syncStoreToIntercom(cancelled.store_hash);
+      if (store?.store_hash) {
+        await syncStoreToIntercom(store.store_hash);
       }
+      await sendPaypalWebhookNotificationEmail({
+        eventType: event.event_type,
+        storeHash: store?.store_hash || resource.custom_id,
+        storeName: store?.store_name,
+        storeEmail: store?.email,
+        storeUrl: store?.store_url || store?.store_domain,
+        subscriptionId: resource.id,
+        planId: resource.plan_id,
+        status: resource.status || event.event_type.split(".").pop(),
+        price: resource.billing_info?.last_payment?.amount?.value,
+        currency: resource.billing_info?.last_payment?.amount?.currency_code || "USD",
+        payerEmail: subscriber.email_address,
+        payerName: [subscriber.name?.given_name, subscriber.name?.surname].filter(Boolean).join(" "),
+        nextBillingTime: resource.billing_info?.next_billing_time,
+      });
+    }
+
+    // Recurring charge notification only — do not change plan here
+    if (event.event_type === "PAYMENT.SALE.COMPLETED") {
+      const resource = event.resource || {};
+      const subscriptionId = resource.billing_agreement_id || resource.billing_subscription_id || null;
+      const store = subscriptionId
+        ? await Store.findOne({ paypalSubscriptionId: subscriptionId }).lean()
+        : null;
+      const amount = resource.amount || {};
+      await sendPaypalWebhookNotificationEmail({
+        eventType: event.event_type,
+        storeHash: store?.store_hash || resource.custom || resource.custom_id,
+        storeName: store?.store_name,
+        storeEmail: store?.email,
+        storeUrl: store?.store_url || store?.store_domain,
+        subscriptionId: subscriptionId || resource.id,
+        planId: "N/A",
+        status: resource.state || resource.status || "completed",
+        price: amount.total ?? amount.value,
+        currency: amount.currency || amount.currency_code || "USD",
+        payerEmail: resource.payer?.email_address || resource.payee?.email,
+        payerName: [resource.payer?.name?.given_name, resource.payer?.name?.surname].filter(Boolean).join(" "),
+        nextBillingTime: "N/A",
+      });
     }
 
     res.status(200).json({ received: true });

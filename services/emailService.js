@@ -227,8 +227,81 @@ const sendPaypalWebhookNotificationEmail = async (details = {}) => {
     }
 };
 
+// Internal alert when a merchant starts a PayPal subscription checkout (clicked Pay)
+const sendPaymentAttemptEmail = async (details = {}) => {
+    try {
+        const {
+            storeHash = "N/A",
+            storeName = "N/A",
+            storeEmail = "N/A",
+            storeUrl = "N/A",
+            subscriptionId = "N/A",
+            planId = "N/A",
+            price = "N/A",
+            currency = "USD",
+            status = "N/A",
+        } = details;
+
+        const priceLabel = price !== "N/A" && price != null ? `${price} ${currency}` : "N/A";
+        const rows = [
+            detailRow("Store name", storeName, { first: true }),
+            detailRow("Store email", storeEmail),
+            detailRow("Store URL", storeUrl),
+            detailRow("Store hash", storeHash, { mono: true }),
+            detailRow("Price", priceLabel),
+            detailRow("Subscription ID", subscriptionId, { mono: true }),
+            detailRow("PayPal plan ID", planId, { mono: true }),
+            detailRow("Status", status),
+            detailRow("Attempted at", new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })),
+        ];
+
+        await transporter.sendMail({
+            from: process.env.EMAIL_FROM,
+            to: "info@seokart.com",
+            replyTo: storeEmail !== "N/A" ? storeEmail : undefined,
+            bcc: "prashantsingh.deskmoz@gmail.com",
+            subject: `App subscription payment tried: ${storeName} — ${priceLabel} (${storeHash})`,
+            html: `
+                <div style="margin:0;padding:0;background-color:#f4f5f7;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:24px 0;">
+                    <tr>
+                    <td align="center">
+                        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+                        <tr>
+                            <td style="background-color:#2563eb;padding:28px 32px;">
+                            <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;">Bulk Optimizer</h1>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding:32px;">
+                            <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.6;">
+                                A merchant has tried to visit the payment page for the subscription.
+                            </p>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+                                ${rows.join("")}
+                            </table>
+                            </td>
+                        </tr>
+                        </table>
+                    </td>
+                    </tr>
+                </table>
+                </div>
+            `,
+        });
+
+        console.log("sendPaymentAttemptEmail: sent for", storeHash, subscriptionId);
+        return true;
+    } catch (error) {
+        console.error("sendPaymentAttemptEmail:", error.message);
+        logError("sendPaymentAttemptEmail failed", { error, storeHash: details?.storeHash });
+        return false;
+    }
+};
+
 module.exports = {
     sendInstallNotificationEmail,
     sendUninstallNotificationEmail,
     sendPaypalWebhookNotificationEmail,
+    sendPaymentAttemptEmail,
 };

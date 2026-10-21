@@ -3,7 +3,7 @@ const { requireAppSession } = require("../middleware/requireAppSession");
 const Store = require("../models/Store");
 const Plan = require("../models/Plan");
 const { syncStoreToIntercom } = require("../services/intercomService");
-const { sendPaypalWebhookNotificationEmail } = require("../services/emailService");
+const { sendPaypalWebhookNotificationEmail, sendPaymentAttemptEmail } = require("../services/emailService");
 
 const router = Router();
 
@@ -278,6 +278,23 @@ router.post("/create-subscription", requireAppSession, async (req, res) => {
 
     console.log("Create subscription status:", response.status);
 console.log("Create subscription response:", JSON.stringify(data, null, 2));
+
+    if (response.ok && data?.id) {
+      const store = await Store.findOne({ store_hash: req.storeHash })
+        .select("store_name email store_url store_domain")
+        .lean();
+      // Fire-and-forget: don't delay returning the subscription id to PayPal checkout
+      sendPaymentAttemptEmail({
+        storeHash: req.storeHash,
+        storeName: store?.store_name, 
+        storeEmail: store?.email,
+        storeUrl: store?.store_url || store?.store_domain,
+        subscriptionId: data.id,
+        planId: plan?.paypalPlanId,
+        price: plan?.price,
+        status: data.status,
+      });
+    }
 
     res.status(response.status).json(data);
     // frontend needs: data.links.find(l => l.rel === "approve").href
